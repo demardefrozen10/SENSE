@@ -22,8 +22,8 @@ PC_LAN_IP = os.getenv("PC_LAN_IP", "").strip()
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
 CAMERA_INDEX_CANDIDATES = os.getenv("CAMERA_INDEX_CANDIDATES", "").strip()
 USE_V4L2 = os.getenv("USE_V4L2", "true").strip().lower() in {"1", "true", "yes", "on"}
-FRAME_FPS = float(os.getenv("FRAME_FPS", "1.0"))
-JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "75"))
+FRAME_FPS = float(os.getenv("FRAME_FPS", "8.0"))
+JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "60"))
 RECONNECT_DELAY_SEC = float(os.getenv("RECONNECT_DELAY_SEC", "3"))
 
 

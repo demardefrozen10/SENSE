@@ -125,12 +125,13 @@ export function DashboardPage() {
   const [cameraOn, setCameraOn] = useState(false)
   const [micOn, setMicOn] = useState(false)
   const [transcript, setTranscript] = useState('')
-  const [piPreviewSrc, setPiPreviewSrc] = useState('')
+  const [hasPiPreview, setHasPiPreview] = useState(false)
   const [eventLog, setEventLog] = useState<LogEntry[]>([])
   const [sessionActive, setSessionActive] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const piImageRef = useRef<HTMLImageElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const cameraStreamRef = useRef<MediaStream | null>(null)
   const micStreamRef = useRef<MediaStream | null>(null)
@@ -161,6 +162,7 @@ export function DashboardPage() {
     socket.onopen = () => {
       setConnected(true)
       addLog('WebSocket connected')
+      console.log('[DEBUG] WS opened to', wsUrl)
     }
 
     socket.onmessage = (event) => {
@@ -172,9 +174,14 @@ export function DashboardPage() {
           if (USE_PI_CAMERA) setCameraOn(true)
           addLog('Gemini Live session active')
         } else if (msg.type === 'viewer_connected') {
+          console.log('[DEBUG] viewer_connected payload:', msg)
           if (USE_PI_CAMERA && msg.source_connected) {
             setCameraOn(true)
             addLog('Viewer attached to active Pi source')
+          }
+          if (msg.session_active) {
+            setSessionActive(true)
+            addLog('Gemini Live session already active')
           }
         } else if (msg.type === 'source_connected') {
           if (USE_PI_CAMERA) setCameraOn(true)
@@ -182,15 +189,21 @@ export function DashboardPage() {
         } else if (msg.type === 'source_disconnected') {
           if (USE_PI_CAMERA) {
             setCameraOn(false)
-            setPiPreviewSrc('')
+            setHasPiPreview(false)
+            if (piImageRef.current) {
+              piImageRef.current.src = ''
+            }
             previewLoggedRef.current = false
           }
           setSessionActive(false)
           addLog('Pi source disconnected')
         } else if (msg.type === 'video_preview') {
           if (USE_PI_CAMERA) {
-            setPiPreviewSrc(`data:image/jpeg;base64,${msg.data as string}`)
+            if (piImageRef.current) {
+              piImageRef.current.src = `data:image/jpeg;base64,${msg.data as string}`
+            }
             if (!previewLoggedRef.current) {
+              setHasPiPreview(true)
               addLog('Receiving Pi camera preview')
               previewLoggedRef.current = true
             }
@@ -217,12 +230,16 @@ export function DashboardPage() {
       }
     }
 
-    socket.onclose = () => {
+    socket.onclose = (ev) => {
+      console.log('[DEBUG] WS closed  code=', ev.code, 'reason=', ev.reason, 'wasClean=', ev.wasClean)
       setConnected(false)
       setSessionActive(false)
       addLog('WebSocket disconnected')
     }
-    socket.onerror = () => socket.close()
+    socket.onerror = (ev) => {
+      console.error('[DEBUG] WS error', ev)
+      socket.close()
+    }
   }, [wsUrl, addLog])
 
   useEffect(() => {
@@ -279,7 +296,10 @@ export function DashboardPage() {
   const stopCamera = useCallback(() => {
     if (USE_PI_CAMERA) {
       setCameraOn(false)
-      setPiPreviewSrc('')
+      setHasPiPreview(false)
+      if (piImageRef.current) {
+        piImageRef.current.src = ''
+      }
       previewLoggedRef.current = false
       addLog('Pi camera mode paused')
       return
@@ -422,13 +442,11 @@ export function DashboardPage() {
         {/* Video panel */}
         <section className="relative flex min-h-[70vh] flex-col overflow-hidden rounded-xl border border-white/10 bg-black shadow-lg">
           {USE_PI_CAMERA ? (
-            piPreviewSrc ? (
-              <img
-                src={piPreviewSrc}
-                alt="Pi camera preview"
-                className="absolute inset-0 h-full w-full object-contain"
-              />
-            ) : null
+            <img
+              ref={piImageRef}
+              alt="Pi camera preview"
+              className={`absolute inset-0 h-full w-full object-contain ${hasPiPreview ? '' : 'hidden'}`}
+            />
           ) : (
             <video
               ref={videoRef}
@@ -441,7 +459,7 @@ export function DashboardPage() {
           <canvas ref={canvasRef} className="hidden" />
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
 
-          {(!cameraOn || (USE_PI_CAMERA && !piPreviewSrc)) && (
+          {(!cameraOn || (USE_PI_CAMERA && !hasPiPreview)) && (
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-white/10 bg-background/95 px-8 py-6 text-center backdrop-blur-sm">
               <Camera className="mx-auto mb-3 h-12 w-12 text-white" />
               <p className="text-xl font-semibold text-white">{USE_PI_CAMERA ? 'Pi camera mode' : 'Camera is off'}</p>

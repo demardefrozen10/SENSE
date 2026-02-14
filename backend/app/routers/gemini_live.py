@@ -28,6 +28,7 @@ _viewer_lock = asyncio.Lock()
 _source_lock = asyncio.Lock()
 _control_queue: asyncio.Queue[dict] = asyncio.Queue()
 _source_connected = False
+_session_active = False
 
 # ---------------------------------------------------------------------------
 # Gemini Live session configuration
@@ -69,12 +70,13 @@ async def gemini_live_proxy(ws: WebSocket) -> None:
     role=viewer: receives Gemini responses and can send text commands (dashboard)
     """
     role = (ws.query_params.get("role") or "source").lower()
+    logger.info("[DEBUG] /ws/live hit  role=%s  client=%s", role, ws.client)
     if role == "viewer":
         await _viewer_loop(ws)
         return
 
     await ws.accept()
-    logger.info("Source connected to /ws/live")
+    logger.info("[DEBUG] Source WebSocket ACCEPTED  client=%s", ws.client)
 
     global _source_connected
     async with _source_lock:
@@ -86,6 +88,7 @@ async def gemini_live_proxy(ws: WebSocket) -> None:
             await ws.close()
             return
         _source_connected = True
+    logger.info("[DEBUG] source_connected broadcast sent to viewers")
     await _broadcast_to_viewers({"type": "source_connected"})
 
     if not GEMINI_API_KEY:
@@ -103,10 +106,13 @@ async def gemini_live_proxy(ws: WebSocket) -> None:
 
     config = _build_config()
 
+    global _session_active
     try:
         async with client.aio.live.connect(model=MODEL, config=config) as session:
-            logger.info("Gemini Live session opened")
+            logger.info("[DEBUG] Gemini Live session opened")
+            _session_active = True
             await ws.send_text(json.dumps({"type": "session_started"}))
+            logger.info("[DEBUG] session_started sent to source + broadcasting to %d viewers", len(_viewer_clients))
             await _broadcast_to_viewers({"type": "session_started"})
 
             source_send_task = asyncio.create_task(
@@ -139,6 +145,7 @@ async def gemini_live_proxy(ws: WebSocket) -> None:
         except Exception:
             pass
     finally:
+        _session_active = False
         try:
             await ws.close()
         except Exception:
@@ -153,12 +160,17 @@ async def _viewer_loop(ws: WebSocket) -> None:
     await ws.accept()
     async with _viewer_lock:
         _viewer_clients.add(ws)
-    logger.info("Viewer connected to /ws/live")
+    logger.info("[DEBUG] Viewer ACCEPTED  client=%s  total_viewers=%d", ws.client, len(_viewer_clients))
 
     try:
+        logger.info(
+            "[DEBUG] Sending viewer_connected  source_connected=%s  session_active=%s",
+            _source_connected, _session_active,
+        )
         await ws.send_text(json.dumps({
             "type": "viewer_connected",
             "source_connected": _source_connected,
+            "session_active": _session_active,
         }))
         while True:
             raw = await ws.receive_text()
@@ -180,6 +192,12 @@ async def _viewer_loop(ws: WebSocket) -> None:
                     continue
                 await _control_queue.put({"type": "text", "text": text})
 
+            elif msg_type == "audio":
+                # Forward viewer mic audio to Gemini via the control queue
+                b64_data = msg.get("data", "")
+                if b64_data and _source_connected:
+                    await _control_queue.put({"type": "audio", "data": b64_data})
+
             elif msg_type == "end_audio_stream":
                 if _source_connected:
                     await _control_queue.put({"type": "end_audio_stream"})
@@ -200,14 +218,22 @@ async def _forward_source_to_gemini(
     session,
 ) -> None:
     """Read messages from source WS and forward to Gemini Live."""
+    _frame_count = 0
     while True:
         raw = await ws.receive_text()
         msg = json.loads(raw)
         msg_type = msg.get("type")
 
         if msg_type == "video":
-            # Browser sends: {"type":"video","data":"<base64 JPEG>"}
+            _frame_count += 1
             b64_data = msg["data"]
+            n_viewers = len(_viewer_clients)
+            if _frame_count <= 3 or _frame_count % 10 == 0:
+                logger.info(
+                    "[DEBUG] video frame #%d received from source  "
+                    "b64_len=%d  viewers=%d",
+                    _frame_count, len(b64_data), n_viewers,
+                )
             await _broadcast_to_viewers({"type": "video_preview", "data": b64_data})
             await session.send_realtime_input(
                 media=types.Blob(
@@ -249,6 +275,15 @@ async def _forward_viewer_commands_to_gemini(session) -> None:
                 await session.send_client_content(
                     turns=types.Content(parts=[types.Part(text=text)]),
                     turn_complete=True,
+                )
+        elif msg_type == "audio":
+            b64_data = command.get("data", "")
+            if b64_data:
+                await session.send_realtime_input(
+                    audio=types.Blob(
+                        data=base64.b64decode(b64_data),
+                        mime_type="audio/pcm;rate=16000",
+                    )
                 )
         elif msg_type == "end_audio_stream":
             await session.send_realtime_input(audio_stream_end=True)
@@ -298,18 +333,24 @@ async def _forward_gemini_to_clients(
 
 
 async def _broadcast_to_viewers(payload: dict) -> None:
+    msg_type = payload.get("type", "?")
     raw = json.dumps(payload)
     async with _viewer_lock:
         viewers = list(_viewer_clients)
+
+    if msg_type != "video_preview":  # avoid spamming logs for every frame
+        logger.info("[DEBUG] broadcast  type=%s  to %d viewer(s)", msg_type, len(viewers))
 
     stale: list[WebSocket] = []
     for viewer in viewers:
         try:
             await viewer.send_text(raw)
-        except Exception:
+        except Exception as exc:
+            logger.warning("[DEBUG] broadcast to viewer failed: %s", exc)
             stale.append(viewer)
 
     if stale:
         async with _viewer_lock:
             for viewer in stale:
                 _viewer_clients.discard(viewer)
+        logger.info("[DEBUG] removed %d stale viewer(s)", len(stale))
