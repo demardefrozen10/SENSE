@@ -10,6 +10,17 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
+from app.database import Base, engine
+from app.routers import auth
+from app.routers.haptic import router as app_haptic_router
+from app.routers.stream import router as app_stream_router
+from app.routers.tts import router as app_tts_router
+from app.routers.vision import router as app_vision_router
+from app.routers.voice_studio import router as app_voice_studio_router
+from app.routers.gemini_live import router as gemini_live_router
+from app.services import close_haptic as app_close_haptic
+from app.services import frame_buffer as app_frame_buffer
+from app.services.vision import inference_loop as app_inference_loop
 from config import CAPTURE_FPS, CORS_ORIGINS, ESP32_CAM_URL, INFERENCE_INTERVAL_MS
 from gemini_service import GeminiService
 from haptic_service import HapticService
@@ -70,6 +81,7 @@ tts = TTSService()
 ws_hub = WebSocketHub()
 
 _inference_task: asyncio.Task | None = None
+_app_inference_task: asyncio.Task | None = None
 
 
 async def on_inference_result(result: dict) -> None:
@@ -85,20 +97,27 @@ async def on_inference_result(result: dict) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global _inference_task
+    global _inference_task, _app_inference_task
 
     logger.info("Starting Echo-Sight backend...")
     gemini.configure()
     gemini.set_pipeline(pipeline)
     gemini.on_result = on_inference_result
 
+    Base.metadata.create_all(bind=engine)
+
     pipeline.start()
+    app_frame_buffer.start()
     haptic.connect()
     await tts.start()
 
-    _inference_task = asyncio.create_task(
-        gemini.start_inference_loop(), name="gemini-inference-loop"
-    )
+    # Legacy inference loops disabled – Gemini Live API replaces them.
+    # _inference_task = asyncio.create_task(
+    #     gemini.start_inference_loop(), name="gemini-inference-loop"
+    # )
+    # _app_inference_task = asyncio.create_task(
+    #     app_inference_loop(), name="app-inference-loop"
+    # )
 
     logger.info("Echo-Sight backend is live.")
     yield
@@ -112,8 +131,16 @@ async def lifespan(_: FastAPI):
             await _inference_task
         _inference_task = None
 
+    if _app_inference_task is not None:
+        _app_inference_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await _app_inference_task
+        _app_inference_task = None
+
     pipeline.stop()
+    app_frame_buffer.stop()
     haptic.disconnect()
+    app_close_haptic()
     await tts.stop()
 
 
@@ -131,6 +158,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth.router)
+app.include_router(app_vision_router)
+app.include_router(app_tts_router)
+app.include_router(app_haptic_router)
+app.include_router(app_stream_router)
+app.include_router(app_voice_studio_router)
+app.include_router(gemini_live_router)
 
 
 @app.get("/health")
