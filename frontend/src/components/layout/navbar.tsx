@@ -10,14 +10,24 @@ const navItems = [
 
 export function Navbar() {
   return (
-    <header className="sticky top-0 z-50 border-b border-white/10 bg-background/80 backdrop-blur-md">
+    <header 
+      className="sticky top-0 z-50 border-b border-white/10 bg-background/80 backdrop-blur-md"
+      role="banner"
+    >
       <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-6 sm:px-10">
-        <Link to="/" className="text-xl font-bold tracking-tight text-white">
+        <Link 
+          to="/" 
+          className="text-xl font-bold tracking-tight text-white"
+          aria-label="VibeGlasses home"
+        >
           Echo-Sight
         </Link>
 
         <div className="flex items-center gap-4">
-          <nav className="hidden items-center gap-1 md:flex">
+          <nav 
+            className="hidden items-center gap-1 md:flex"
+            aria-label="Main navigation"
+          >
             {navItems.map((item) => (
               <Button key={item.to} asChild variant="ghost" size="sm" className="text-white/70 hover:text-white hover:bg-white/10">
                 <NavLink
@@ -25,6 +35,7 @@ export function Navbar() {
                   className={({ isActive }) =>
                     isActive ? 'font-medium text-white' : ''
                   }
+                  end={item.to === '/'}
                 >
                   {item.label}
                 </NavLink>
@@ -32,9 +43,14 @@ export function Navbar() {
             ))}
           </nav>
 
-          <Button size="sm" variant="outline" className="gap-1.5 rounded-full border-white/25 bg-transparent text-sm text-white hover:bg-white hover:text-black">
+          <Button 
+            size="sm" 
+            variant="outline" 
+            className="gap-1.5 rounded-full border-white/25 bg-transparent text-sm text-white hover:bg-white hover:text-black"
+            aria-label="Get started with VibeGlasses"
+          >
             Get started
-            <ArrowRight className="h-3.5 w-3.5" />
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
           </Button>
         </div>
       </div>

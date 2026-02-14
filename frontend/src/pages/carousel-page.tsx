@@ -43,26 +43,47 @@ const glassesStyles = [
 
 export function CarouselPage() {
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col px-6 pb-16 pt-10 sm:px-10">
-      <div className="mb-8 space-y-3">
+    <main 
+      id="main-content"
+      role="main" 
+      className="mx-auto flex w-full max-w-6xl flex-col px-6 pb-16 pt-10 sm:px-10"
+      aria-label="Frame styles gallery"
+    >
+      <header className="mb-8 space-y-3">
         <Badge variant="outline" className="w-fit border-white/20 text-sm text-white/70">
           Style Gallery
         </Badge>
-        <h1 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">Browse frame collections</h1>
+        <h1 
+          id="gallery-heading" 
+          className="text-3xl font-bold tracking-tight text-white sm:text-4xl"
+        >
+          Browse frame collections
+        </h1>
         <p className="max-w-2xl text-muted-foreground">
           Slide through popular glasses styles and pick what fits your personality best.
+          Use arrow keys or navigation buttons to browse.
         </p>
-      </div>
+      </header>
 
-      <div className="mx-auto w-full max-w-4xl px-12">
-        <Carousel opts={{ align: 'start', loop: true }}>
+      <section 
+        className="mx-auto w-full max-w-4xl px-12"
+        aria-labelledby="gallery-heading"
+      >
+        <Carousel 
+          opts={{ align: 'start', loop: true }}
+          aria-label={`Frame styles carousel, ${glassesStyles.length} items`}
+        >
           <CarouselContent>
-            {glassesStyles.map((style) => (
-              <CarouselItem key={style.title} className="md:basis-1/2">
+            {glassesStyles.map((style, index) => (
+              <CarouselItem 
+                key={style.title} 
+                className="md:basis-1/2"
+                aria-label={`Slide ${index + 1} of ${glassesStyles.length}: ${style.title}`}
+              >
                 <Card className="overflow-hidden border-white/10 bg-card">
                   <img
                     src={style.image}
-                    alt={style.title}
+                    alt={`${style.title} glasses frame - ${style.description}`}
                     className="h-64 w-full object-cover"
                   />
                   <CardHeader>
@@ -76,10 +97,10 @@ export function CarouselPage() {
               </CarouselItem>
             ))}
           </CarouselContent>
-          <CarouselPrevious />
-          <CarouselNext />
+          <CarouselPrevious aria-label="Previous frame style" />
+          <CarouselNext aria-label="Next frame style" />
         </Carousel>
-      </div>
+      </section>
     </main>
   )
 }

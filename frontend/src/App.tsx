@@ -7,6 +7,19 @@ import { HomePage } from '@/pages/home-page'
 function App() {
   return (
     <div className="min-h-screen bg-background">
+      {/* Skip navigation link for WCAG 2.4.1 Bypass Blocks */}
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+      
+      {/* Live region for screen reader announcements - WCAG 4.1.3 Status Messages */}
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+        id="announcement-region"
+      />
+      
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/carousel" element={<CarouselPage />} />
