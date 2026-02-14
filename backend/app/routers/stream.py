@@ -13,17 +13,24 @@ router = APIRouter(prefix="/stream", tags=["stream"])
 
 def mjpeg_generator():
     """Yield JPEG frames at ~30 FPS as multipart stream."""
-    import cv2
-    
     interval = 1.0 / 30.0
+    waited_once = False
+    
     while True:
-        frame = frame_buffer.get()
-        if frame is not None:
-            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        jpg_bytes = frame_buffer.get_jpeg(quality=80)
+        if jpg_bytes is not None:
             yield (
                 b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + jpg_bytes + b"\r\n"
             )
+            waited_once = False
+        else:
+            # Wait a bit longer if no frame yet
+            if not waited_once:
+                print("[Stream] Waiting for first frame...")
+                waited_once = True
+            time.sleep(0.1)
+            continue
         time.sleep(interval)
 
 

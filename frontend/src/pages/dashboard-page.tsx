@@ -312,10 +312,11 @@ export function DashboardPage() {
       <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-6 p-6 xl:grid-cols-[minmax(0,1fr)_380px]">
         <section className="relative min-h-[70vh] overflow-hidden rounded-xl border border-white/10 bg-black shadow-lg">
           <img
-            src={videoUrl}
+            src={`${videoUrl}?t=${Date.now()}`}
             alt="Live camera feed"
             onLoad={() => setVideoReady(true)}
-            className="h-full w-full object-cover"
+            onError={() => setVideoReady(false)}
+            className="absolute inset-0 h-full w-full object-contain"
           />
 
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
