@@ -10,6 +10,7 @@ import {
   WifiOff,
   Glasses,
   Activity,
+  SlidersHorizontal,
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -333,6 +334,15 @@ export function DashboardPage() {
               <User className="h-4 w-4" aria-hidden="true" />
               {username}
             </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-white/10 hover:bg-white/5"
+              onClick={() => navigate('/voice-studio')}
+            >
+              <SlidersHorizontal className="mr-2 h-4 w-4" />
+              Voice Studio
+            </Button>
             <Button
               variant="outline"
               size="sm"
