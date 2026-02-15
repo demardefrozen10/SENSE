@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, CheckCircle2, Filter, SlidersHorizontal, Volume2 } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Filter, Glasses, SlidersHorizontal, Volume2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 
@@ -217,7 +217,7 @@ export function VoiceStudioPage() {
       const payload: Record<string, unknown> = {
         ...currentProfile,
         voice_id: voiceId,
-        text: previewText.trim() || 'S.E.N.S.E. voice preview.',
+        text: previewText.trim() || 'SENSE voice preview.',
       }
 
       const response = await fetch(`${apiBase}/voice-studio/preview`, {
@@ -253,14 +253,15 @@ export function VoiceStudioPage() {
 
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-border bg-background px-6 py-4 shadow-sm">
+    <main className="min-h-screen bg-background text-foreground" role="main" aria-label="SENSE voice studio">
+      <h1 className="sr-only">SENSE voice studio</h1>
+      <header className="border-b border-border bg-background px-4 py-4 shadow-sm">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-              S.E.N.S.E.
-            </p>
-            <h1 className="text-2xl font-semibold text-foreground">Voice Studio</h1>
+          <div className="flex items-center gap-3">
+            <Glasses className="h-6 w-6 text-foreground" />
+            <span className="sr-only">SENSE</span>
+            <p aria-hidden="true" className="text-xl font-bold italic tracking-tight text-foreground">S.E.N.S.E.</p>
+            <span className="ml-2 text-sm text-muted-foreground">Voice Studio</span>
           </div>
           <Button
             aria-label="Back to dashboard"

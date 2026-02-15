@@ -45,7 +45,8 @@ export function Hero({ onGetStarted, onSignIn }: HeroProps) {
         <div className="mx-auto flex h-24 w-full max-w-7xl items-center justify-between px-6 sm:px-10">
           <div className="flex items-center gap-2">
             <Glasses className="h-7 w-7 text-foreground" aria-hidden="true" />
-            <span className="text-3xl font-bold italic tracking-tight text-foreground">
+            <span className="sr-only">SENSE</span>
+            <span aria-hidden="true" className="text-3xl font-bold italic tracking-tight text-foreground">
               S.E.N.S.E.
             </span>
           </div>
@@ -73,7 +74,7 @@ export function Hero({ onGetStarted, onSignIn }: HeroProps) {
             <Button
               className="hero-cta-primary h-11 rounded-lg px-4 text-sm font-semibold sm:px-6 sm:text-base"
               onClick={onGetStarted}
-              aria-label="Get started with S.E.N.S.E."
+              aria-label="Get started with SENSE"
             >
               Get started
             </Button>
@@ -84,9 +85,10 @@ export function Hero({ onGetStarted, onSignIn }: HeroProps) {
       <div className="relative z-10 mx-auto flex min-h-screen min-h-[100dvh] w-full max-w-5xl flex-col items-center justify-center px-6 pb-28 pt-36 text-center sm:px-10">
         <h1
           id="hero-heading"
+          aria-label="SENSE"
           className="mt-12 max-w-4xl text-6xl font-bold leading-tight tracking-tight text-foreground sm:text-7xl md:text-8xl"
         >
-          S.E.N.S.E.
+          <span aria-hidden="true">S.E.N.S.E.</span>
         </h1>
 
         <p className="mt-6 max-w-2xl text-lg leading-relaxed text-muted-foreground sm:text-xl">
@@ -102,7 +104,7 @@ export function Hero({ onGetStarted, onSignIn }: HeroProps) {
             size="lg"
             className="hero-cta-primary h-14 gap-2 rounded-xl px-9 text-lg font-semibold"
             onClick={onGetStarted}
-            aria-label="Get started with S.E.N.S.E. - opens sign in dialog"
+            aria-label="Get started with SENSE - opens sign in dialog"
           >
             Get Started
             <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
@@ -112,7 +114,7 @@ export function Hero({ onGetStarted, onSignIn }: HeroProps) {
             size="lg"
             className="hero-cta-secondary h-14 gap-2 rounded-xl px-9 text-lg font-semibold"
           >
-            <Link to="/carousel" aria-label="Watch demo video of S.E.N.S.E.">
+            <Link to="/carousel" aria-label="Watch demo video of SENSE">
               <Play className="h-4 w-4" aria-hidden="true" />
               Watch Demo
             </Link>
@@ -120,13 +122,13 @@ export function Hero({ onGetStarted, onSignIn }: HeroProps) {
         </div>
 
         <div className="mt-10 flex flex-col items-center justify-center">
-          <p className="text-sm uppercase tracking-[0.25rem] text-muted-foreground">
-            Powered by CS Hub
+          <p className="text-sm text-muted-foreground">
+            Powered By
           </p>
           <img
             src={csHubLogo}
-            alt="CS Hub - powering S.E.N.S.E."
-            className="hero-brand-logo mt-5 h-auto w-24 object-contain"
+            alt="CS Hub - powering SENSE"
+            className="hero-brand-logo mt-2 h-auto w-24 object-contain"
           />
         </div>
 
@@ -134,12 +136,12 @@ export function Hero({ onGetStarted, onSignIn }: HeroProps) {
           className="absolute bottom-8 left-1/2 w-[min(100%,44rem)] -translate-x-1/2 px-6"
           aria-label="Product features"
         >
-          <div className="flex flex-wrap items-center justify-center gap-3 rounded-full border border-border bg-card px-6 py-3 shadow-sm">
-            <span className="text-sm font-medium text-muted-foreground">Open source</span>
+          <div className="flex flex-wrap items-center justify-center gap-3 px-6 py-3">
+            <span className="text-sm font-medium text-muted-foreground">Open Source</span>
             <span className="h-1 w-1 rounded-full bg-border" aria-hidden="true" />
-            <span className="text-sm font-medium text-muted-foreground">Arduino powered</span>
+            <span className="text-sm font-medium text-muted-foreground">Arduino Powered</span>
             <span className="h-1 w-1 rounded-full bg-border" aria-hidden="true" />
-            <span className="text-sm font-medium text-muted-foreground">AI-enhanced</span>
+            <span className="text-sm font-medium text-muted-foreground">AI Enhanced</span>
           </div>
         </div>
       </div>

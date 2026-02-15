@@ -20,7 +20,8 @@ _viewer_lock = asyncio.Lock()
 _source_lock = asyncio.Lock()
 _source_connected = False
 _source_last_seen_monotonic = 0.0
-_SOURCE_STALE_SECONDS = 12.0
+_SOURCE_STALE_SECONDS = 45.0
+_VIEWER_SEND_TIMEOUT_SECONDS = 1.5
 
 
 async def _broadcast_to_viewers(payload: dict) -> None:
@@ -28,17 +29,28 @@ async def _broadcast_to_viewers(payload: dict) -> None:
     async with _viewer_lock:
         viewers = list(_viewer_clients)
 
-    stale: list[WebSocket] = []
-    for viewer in viewers:
+    async def _send_one(viewer: WebSocket) -> tuple[WebSocket, bool]:
         try:
-            await viewer.send_text(raw)
+            await asyncio.wait_for(viewer.send_text(raw), timeout=_VIEWER_SEND_TIMEOUT_SECONDS)
+            return viewer, True
         except Exception:
+            return viewer, False
+
+    results = await asyncio.gather(*(_send_one(viewer) for viewer in viewers), return_exceptions=True)
+
+    stale: list[WebSocket] = []
+    for result in results:
+        if isinstance(result, Exception):
+            continue
+        viewer, ok = result
+        if not ok:
             stale.append(viewer)
 
     if stale:
         async with _viewer_lock:
             for viewer in stale:
                 _viewer_clients.discard(viewer)
+        logger.info("Dropped %d stale viewer socket(s)", len(stale))
 
 
 @router.websocket("/ws/live")

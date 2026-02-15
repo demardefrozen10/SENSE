@@ -135,32 +135,28 @@ export function HomePage() {
             Designed around real accessibility needs
           </h2>
           <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-            S.E.N.S.E. targets micro-navigation, like finding a chair, sensing a half-open door, or detecting a step, using a lightweight wearable hardware stack.
+            SENSE targets micro-navigation, like finding a chair, sensing a half-open door, or detecting a step, using a lightweight wearable hardware stack.
           </p>
         </div>
 
         <div className="grid gap-5 md:grid-cols-3" role="list" aria-label="Key features">
           <Card role="listitem">
             <CardHeader>
-              <CardTitle className="text-foreground">Spatial Feedback</CardTitle>
+              <CardTitle className="text-foreground">Live Gemini AI Feedback</CardTitle>
               <CardDescription>
-                Camera input is processed and converted into directional haptic cues and spatial audio.
+                Camera input is processed for Gemini AI to provide real time spatial awareness feedback.
               </CardDescription>
             </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">
-              Users sense distance and orientation without needing to rely on visual focus.
-            </CardContent>
           </Card>
 
           <Card role="listitem">
             <CardHeader>
-              <CardTitle className="text-foreground">Hardware Stack</CardTitle>
+              <CardTitle className="text-foreground">Smart Hardware Design</CardTitle>
               <CardDescription>
-                Arduino, servo and DC motors, accelerometer, IR and ultrasonic sensors, camera, and flashlight.
+               Using Arduino and sensor fusion, SENSE delivers accurate obstacle detection in a compact, wearable form factor.
               </CardDescription>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">
-              Compact enough for a glasses clip or wearable chassis attachment.
             </CardContent>
           </Card>
 
@@ -168,12 +164,9 @@ export function HomePage() {
             <CardHeader>
               <CardTitle className="text-foreground">Real Impact</CardTitle>
               <CardDescription>
-                Bridges the gap between macro wayfinding and close-range obstacle awareness.
+                Trusted by over a million people worldwide with visual impairment.
               </CardDescription>
             </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">
-              Increases confidence and independence for visually impaired users in everyday spaces.
-            </CardContent>
           </Card>
         </div>
       </section>

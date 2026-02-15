@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import cv2
 import websockets
+from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
@@ -168,7 +169,10 @@ async def _send_video_loop(ws: websockets.ClientConnection, stop_event: asyncio.
                 "type": "video",
                 "data": _encode_frame_to_base64_jpeg(frame),
             }
-            await ws.send(json.dumps(payload))
+            try:
+                await ws.send(json.dumps(payload))
+            except (ConnectionClosed, ConnectionClosedError, ConnectionClosedOK):
+                break
 
             next_send += frame_interval
             sleep_for = next_send - asyncio.get_running_loop().time()
@@ -203,8 +207,16 @@ async def stream_camera_to_backend(stop_event: asyncio.Event) -> None:
                 if pending:
                     await asyncio.gather(*pending, return_exceptions=True)
 
-                for task in done:
-                    task.result()
+                done_results = await asyncio.gather(*done, return_exceptions=True)
+                for result in done_results:
+                    if result is None:
+                        continue
+                    if isinstance(result, SourceAlreadyActiveError):
+                        raise result
+                    if isinstance(result, (ConnectionClosed, ConnectionClosedError, ConnectionClosedOK)):
+                        raise result
+                    if isinstance(result, Exception):
+                        raise result
 
         except asyncio.CancelledError:
             raise

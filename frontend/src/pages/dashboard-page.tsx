@@ -1,19 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from '@google/genai'
+import { ActivityHandling, GoogleGenAI, Modality, type LiveServerMessage, type Session } from '@google/genai'
 import {
   Camera,
-  CameraOff,
   Glasses,
   LogOut,
-  Mic,
-  MicOff,
   SlidersHorizontal,
   User,
-  Wifi,
-  WifiOff,
-  Activity,
-  MessageSquare,
   Volume2,
 } from 'lucide-react'
 
@@ -32,13 +25,13 @@ type VoiceProfile = {
 }
 
 const MAX_LOG = 120
-const USE_PI_CAMERA = true
 const FRAME_INTERVAL_MS = 500
 const PROACTIVE_PROMPT_INTERVAL_MS = 4000
 const MIC_BUFFER_SIZE = 1024
 const GEMINI_MODEL =
   (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() || 'gemini-2.5-flash-native-audio-latest'
 const GEMINI_API_KEY = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined)?.trim() || ''
+const WAKE_PHRASE = 'hey sense'
 
 function apiBaseUrl() {
   const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
@@ -50,6 +43,16 @@ function apiBaseUrl() {
 
 function now() {
   return new Date().toLocaleTimeString()
+}
+
+function extractWakePhraseQuestion(text: string): string | null {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (!normalized) return null
+  const lower = normalized.toLowerCase()
+  const idx = lower.indexOf(WAKE_PHRASE)
+  if (idx < 0) return null
+  const question = normalized.slice(idx + WAKE_PHRASE.length).trim().replace(/^[:,-]\s*/, '')
+  return question || ''
 }
 
 function Panel({
@@ -178,13 +181,13 @@ export function DashboardPage() {
   const username = localStorage.getItem('username') || 'User'
 
   const [geminiConnected, setGeminiConnected] = useState(false)
-  const [piConnected, setPiConnected] = useState(false)
-  const [cameraOn, setCameraOn] = useState(false)
+  const [, setPiConnected] = useState(false)
+  const [cameraOn, setCameraOn] = useState(true)
   const [micOn, setMicOn] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [hasPiPreview, setHasPiPreview] = useState(false)
-  const [eventLog, setEventLog] = useState<LogEntry[]>([])
-  const [sessionActive, setSessionActive] = useState(false)
+  const [, setEventLog] = useState<LogEntry[]>([])
+  const [, setSessionActive] = useState(false)
   const [voiceProvider, setVoiceProvider] = useState<VoiceProvider>('elevenlabs')
   const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null)
 
@@ -214,6 +217,8 @@ export function DashboardPage() {
   const elevenLabsSpeakingRef = useRef(false)
   const elevenLabsAudioRef = useRef<HTMLAudioElement | null>(null)
   const elevenLabsAudioUrlRef = useRef<string | null>(null)
+  const lastWakeHandledRef = useRef('')
+  const proactivePausedUntilRef = useRef(0)
 
   const apiBase = useMemo(apiBaseUrl, [])
   const backendWsUrl = `${apiBase.replace(/^http/i, 'ws')}/ws/live?role=viewer`
@@ -223,6 +228,18 @@ export function DashboardPage() {
       const entry: LogEntry = { id: Date.now() + Math.random(), time: now(), text }
       return [entry, ...prev].slice(0, MAX_LOG)
     })
+  }, [])
+
+  const stopPlaybackAndQueues = useCallback(() => {
+    playerRef.current?.clear()
+    if (elevenLabsAudioRef.current) {
+      elevenLabsAudioRef.current.pause()
+      elevenLabsAudioRef.current.currentTime = 0
+    }
+    elevenLabsQueueRef.current = []
+    elevenLabsPendingChunkRef.current = ''
+    pendingTurnTextRef.current = ''
+    lastOutputTranscriptionRef.current = ''
   }, [])
 
   useEffect(() => {
@@ -351,6 +368,29 @@ export function DashboardPage() {
     [addLog],
   )
 
+  const safeSendInterruptingText = useCallback(
+    (text: string) => {
+      const session = sessionRef.current
+      if (!session || !geminiConnectedRef.current) return false
+      const wsReadyState = (session as { conn?: { ws?: { readyState?: number } } }).conn?.ws?.readyState
+      if (typeof wsReadyState === 'number' && wsReadyState !== WebSocket.OPEN) {
+        geminiConnectedRef.current = false
+        setGeminiConnected(false)
+        setSessionActive(false)
+        return false
+      }
+      try {
+        // Per Live API contract, client content interrupts ongoing generation.
+        session.sendClientContent({ turns: text, turnComplete: true })
+        return true
+      } catch (err) {
+        addLog(`Gemini interrupt send failed: ${err instanceof Error ? err.message : String(err)}`)
+        return safeSendRealtimeInput({ text })
+      }
+    },
+    [addLog, safeSendRealtimeInput],
+  )
+
   const handleLiveMessage = useCallback(
     (msg: LiveServerMessage) => {
       if (msg.data) {
@@ -371,7 +411,22 @@ export function DashboardPage() {
       }
 
       if (msg.serverContent?.inputTranscription?.text && msg.serverContent.inputTranscription.finished) {
-        addLog(`You: ${msg.serverContent.inputTranscription.text}`)
+        const spoken = msg.serverContent.inputTranscription.text
+        addLog(`You: ${spoken}`)
+        const wakeQuestion = extractWakePhraseQuestion(spoken)
+        if (wakeQuestion !== null && spoken !== lastWakeHandledRef.current) {
+          lastWakeHandledRef.current = spoken
+          proactivePausedUntilRef.current = Date.now() + 12000
+          stopPlaybackAndQueues()
+          const questionText = wakeQuestion || 'Please answer my question now.'
+          const sent = safeSendInterruptingText(
+            `Stop speaking immediately and answer only this user question: ${questionText}`,
+          )
+          if (!sent) {
+            safeSendRealtimeInput({ text: questionText })
+          }
+          addLog('Wake phrase detected: interrupting current speech and answering')
+        }
       }
 
       if (
@@ -417,7 +472,7 @@ export function DashboardPage() {
         setTranscript((p) => (p ? `${p}\n` : p))
       }
     },
-    [addLog, flushElevenLabsPendingChunk],
+    [addLog, flushElevenLabsPendingChunk, safeSendInterruptingText, safeSendRealtimeInput, stopPlaybackAndQueues],
   )
 
   const connectGemini = useCallback(async () => {
@@ -434,8 +489,11 @@ export function DashboardPage() {
         model: GEMINI_MODEL,
         config: {
           responseModalities: [Modality.AUDIO],
+          realtimeInputConfig: {
+            activityHandling: ActivityHandling.NO_INTERRUPTION,
+          },
           systemInstruction:
-            "You are Echo-Sight, a real-time accessibility assistant for visually impaired users. You receive a live webcam video feed. Proactively describe what you see without waiting for the user to ask. Describe obstacles, hazards, objects, and surroundings in short, clear sentences (max 15 words). Use clock-position directions (e.g. 'Chair at 2 o\\'clock, 3 feet away'). Prioritize safety-critical objects first, then notable items. For example, if you see a bag of chips, say 'I see chips'. Speak naturally and calmly.",
+            "You are Sense, a real-time accessibility assistant for visually impaired users. You receive a live webcam video feed. Proactively describe what you see without waiting for the user to ask. Describe obstacles, hazards, objects, and surroundings in short, clear sentences (max 15 words). Use clock-position directions (e.g. 'Chair at 2 o\\'clock, 3 feet away'). Prioritize safety-critical objects first, then notable items. For example, if you see a bag of chips, say 'I see chips'. Speak naturally and calmly. Continue proactive guidance through background speech and interruptions. Only switch to direct Q&A when the user explicitly starts with 'hey sense'. If the wake phrase is not used, do not switch into question-answer mode.",
           inputAudioTranscription: {},
           outputAudioTranscription: {},
         },
@@ -529,7 +587,6 @@ export function DashboardPage() {
           setCameraOn(true)
           addLog('Pi source connected')
         } else if (msg.type === 'source_disconnected') {
-          setCameraOn(false)
           setHasPiPreview(false)
           latestPiFrameRef.current = ''
           if (piImageRef.current) piImageRef.current.src = ''
@@ -645,6 +702,7 @@ export function DashboardPage() {
     if (!geminiConnected) return
 
     const timer = window.setInterval(() => {
+      if (Date.now() < proactivePausedUntilRef.current) return
       if (!latestPiFrameRef.current) return
       safeSendRealtimeInput({
         text: 'Give one short proactive mobility safety update for this view. Warn early if needed.',
@@ -653,17 +711,6 @@ export function DashboardPage() {
 
     return () => clearInterval(timer)
   }, [cameraOn, geminiConnected, safeSendRealtimeInput])
-
-  const startCamera = useCallback(() => {
-    if (!USE_PI_CAMERA) return
-    setCameraOn(true)
-    addLog('Pi camera forwarding enabled')
-  }, [addLog])
-
-  const stopCamera = useCallback(() => {
-    setCameraOn(false)
-    addLog('Pi camera forwarding paused')
-  }, [addLog])
 
   const startMic = useCallback(async () => {
     try {
@@ -728,6 +775,12 @@ export function DashboardPage() {
   }, [addLog, safeSendRealtimeInput])
 
   useEffect(() => {
+    if (!localStorage.getItem('token')) return
+    if (micOn) return
+    void startMic()
+  }, [micOn, startMic])
+
+  useEffect(() => {
     return () => {
       playerRef.current?.stop()
       stopMic()
@@ -736,6 +789,7 @@ export function DashboardPage() {
 
   const handleLogout = () => {
     stopMic()
+    stopPlaybackAndQueues()
     wsRef.current?.close()
     disconnectGemini()
     localStorage.removeItem('token')
@@ -743,29 +797,31 @@ export function DashboardPage() {
     navigate('/')
   }
 
-  const handleSendText = (text: string) => {
-    if (!text) return
-    const sent = safeSendRealtimeInput({ text })
-    if (sent) {
-      addLog(`You: ${text}`)
-    } else {
-      addLog('Unable to send text: Gemini session is disconnected')
+  const handleOpenVoiceStudio = () => {
+    stopMic()
+    stopPlaybackAndQueues()
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.close()
     }
+    disconnectGemini()
+    navigate('/voice-studio')
   }
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="min-h-screen bg-background text-foreground" role="main" aria-label="SENSE live dashboard">
+      <h1 className="sr-only">SENSE live dashboard</h1>
       {/* Header */}
       <header className="border-b border-border bg-background px-4 py-4 shadow-sm">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <Glasses className="h-6 w-6 text-foreground" />
-            <p className="text-xl font-bold italic tracking-tight text-foreground">S.E.N.S.E.</p>
+            <span className="sr-only">SENSE</span>
+            <p aria-hidden="true" className="text-xl font-bold italic tracking-tight text-foreground">S.E.N.S.E.</p>
             <span className="ml-2 text-sm text-muted-foreground">Live</span>
           </div>
 
           <div className="flex items-center gap-3">
-            <span
+            {/* <span
               className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium ${
                 geminiConnected
                   ? 'border-green-500/20 bg-green-500/10 text-green-400'
@@ -774,7 +830,7 @@ export function DashboardPage() {
             >
               {geminiConnected ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
               {geminiConnected ? 'Gemini Live' : 'Gemini Disconnected'}
-            </span>
+            </span> */}
             <span className="flex items-center gap-2 text-sm text-muted-foreground">
               <User className="h-4 w-4" />
               {username}
@@ -798,7 +854,7 @@ export function DashboardPage() {
               variant="outline"
               size="sm"
               className="border-border bg-background hover:bg-card"
-              onClick={() => navigate('/voice-studio')}
+              onClick={handleOpenVoiceStudio}
             >
               <SlidersHorizontal className="mr-2 h-4 w-4" />
               Voice Studio
@@ -817,7 +873,7 @@ export function DashboardPage() {
       </header>
 
       <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-6 p-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <section className="relative flex min-h-[70vh] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-lg">
+        <section className="relative flex aspect-video w-full flex-col overflow-hidden rounded-xl border border-border bg-card shadow-lg">
           <img
             ref={piImageRef}
             alt="Pi camera preview"
@@ -826,44 +882,21 @@ export function DashboardPage() {
 
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
 
-          {(!cameraOn || !hasPiPreview) && (
+          {!hasPiPreview && (
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-background px-8 py-6 text-center">
               <Camera className="mx-auto mb-3 h-12 w-12 text-foreground" />
-              <p className="text-xl font-semibold text-foreground">Camera is off</p>
+              <p className="text-xl font-semibold text-foreground">Waiting for camera feed</p>
               <p className="mt-2 text-sm text-muted-foreground">
                 Waiting for Raspberry Pi frames from backend relay.
               </p>
             </div>
           )}
-
-          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-4 border-t border-border bg-background px-6 py-4">
-            <Button
-              onClick={cameraOn ? stopCamera : startCamera}
-              className={`h-12 gap-2 px-6 text-sm font-semibold ${
-                cameraOn ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-white text-black hover:bg-white/90'
-              }`}
-            >
-              {cameraOn ? <CameraOff className="h-5 w-5" /> : <Camera className="h-5 w-5" />}
-              {cameraOn ? 'Pause Pi Forwarding' : 'Start Pi Forwarding'}
-            </Button>
-            <Button
-              onClick={micOn ? stopMic : startMic}
-              className={`h-12 gap-2 px-6 text-sm font-semibold ${
-                micOn
-                  ? 'bg-destructive text-destructive-foreground hover:opacity-90'
-                  : 'bg-foreground text-background hover:opacity-90'
-              }`}
-            >
-              {micOn ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-              {micOn ? 'Mute Mic' : 'Start Mic'}
-            </Button>
-          </div>
         </section>
 
         <aside className="flex flex-col gap-4">
           <DashboardSettings />
 
-          <Panel title="Connection" icon={<User className="h-4 w-4" />}>
+          {/* <Panel title="Connection" icon={<User className="h-4 w-4" />}>
             <div className="space-y-2 text-sm text-muted-foreground">
               <p>
                 <span className="font-medium text-white">Backend Relay:</span> <span className="text-xs">{apiBase}</span>
@@ -881,10 +914,10 @@ export function DashboardPage() {
                 <span className="font-medium text-white">Gemini:</span> {sessionActive ? 'LIVE' : 'DISCONNECTED'}
               </p>
             </div>
-          </Panel>
+          </Panel> */}
 
           <Panel title="Gemini Response" icon={<Volume2 className="h-4 w-4" />}>
-            <div className="max-h-[200px] overflow-y-auto whitespace-pre-wrap text-sm text-foreground">
+            <div className="max-h-[200px] overflow-y-auto whitespace-pre-wrap text-sm text-foreground" role="log" aria-live="polite">
               {transcript || (
                 <span className="text-muted-foreground">
                   {voiceProvider === 'elevenlabs'
@@ -905,7 +938,7 @@ export function DashboardPage() {
             )}
           </Panel>
 
-          <Panel title="Send Message" icon={<MessageSquare className="h-4 w-4" />}>
+          {/* <Panel title="Send Message" icon={<MessageSquare className="h-4 w-4" />}>
             <form
               className="flex gap-2"
               onSubmit={(e) => {
@@ -931,9 +964,9 @@ export function DashboardPage() {
                 Send
               </Button>
             </form>
-          </Panel>
+          </Panel> */}
 
-          <Panel title="Activity Log" icon={<Activity className="h-4 w-4" />} className="flex-1">
+          {/* <Panel title="Activity Log" icon={<Activity className="h-4 w-4" />} className="flex-1">
             <div className="max-h-[320px] space-y-1.5 overflow-y-auto pr-1 text-xs">
               {eventLog.length === 0 && <p className="text-muted-foreground">Waiting for events...</p>}
               {eventLog.map((entry) => (
@@ -943,7 +976,7 @@ export function DashboardPage() {
                 </div>
               ))}
             </div>
-          </Panel>
+          </Panel> */}
         </aside>
       </div>
     </main>

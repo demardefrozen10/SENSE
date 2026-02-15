@@ -18,9 +18,10 @@ export function Navbar() {
         <Link
           to="/"
           className="text-xl font-bold tracking-tight text-foreground"
-          aria-label="S.E.N.S.E. home"
+          aria-label="SENSE home"
         >
-          S.E.N.S.E.
+          <span className="sr-only">SENSE</span>
+          <span aria-hidden="true">S.E.N.S.E.</span>
         </Link>
 
         <div className="flex items-center gap-4">
@@ -53,7 +54,7 @@ export function Navbar() {
             size="sm"
             variant="outline"
             className="gap-1.5 rounded-full border-border bg-background text-sm text-foreground hover:bg-card"
-            aria-label="Get started with S.E.N.S.E."
+            aria-label="Get started with SENSE"
           >
             Get started
             <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
