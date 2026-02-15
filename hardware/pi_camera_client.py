@@ -1,0 +1,248 @@
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import os
+import signal
+from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+import cv2
+import websockets
+from dotenv import load_dotenv
+
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
+
+BACKEND_WS_URL = os.getenv("BACKEND_WS_URL", "").strip()
+BACKEND_HOST = os.getenv("BACKEND_HOST", "").strip()
+BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8010"))
+BACKEND_WS_PATH = os.getenv("BACKEND_WS_PATH", "/ws/live").strip() or "/ws/live"
+PC_LAN_IP = os.getenv("PC_LAN_IP", "").strip()
+CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
+CAMERA_INDEX_CANDIDATES = os.getenv("CAMERA_INDEX_CANDIDATES", "").strip()
+USE_V4L2 = os.getenv("USE_V4L2", "true").strip().lower() in {"1", "true", "yes", "on"}
+FRAME_FPS = float(os.getenv("FRAME_FPS", "12"))
+JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "60"))
+FRAME_WIDTH = int(os.getenv("FRAME_WIDTH", "640"))
+FRAME_HEIGHT = int(os.getenv("FRAME_HEIGHT", "360"))
+RECONNECT_DELAY_SEC = float(os.getenv("RECONNECT_DELAY_SEC", "3"))
+
+
+class SourceAlreadyActiveError(RuntimeError):
+    pass
+
+
+def _build_backend_ws_url() -> str:
+    if BACKEND_WS_URL:
+        if ("localhost" in BACKEND_WS_URL or "127.0.0.1" in BACKEND_WS_URL) and PC_LAN_IP:
+            return BACKEND_WS_URL.replace("localhost", PC_LAN_IP).replace("127.0.0.1", PC_LAN_IP)
+        return BACKEND_WS_URL
+
+    host = BACKEND_HOST or PC_LAN_IP
+    if not host:
+        host = "127.0.0.1"
+
+    path = BACKEND_WS_PATH if BACKEND_WS_PATH.startswith("/") else f"/{BACKEND_WS_PATH}"
+    return f"ws://{host}:{BACKEND_PORT}{path}"
+
+
+def _ensure_source_role(url: str) -> str:
+    parsed = urlparse(url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query.setdefault("role", "source")
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+RESOLVED_BACKEND_WS_URL = _ensure_source_role(_build_backend_ws_url())
+
+
+def _camera_index_candidates() -> list[int]:
+    if CAMERA_INDEX_CANDIDATES:
+        values: list[int] = []
+        for part in CAMERA_INDEX_CANDIDATES.split(","):
+            token = part.strip()
+            if not token:
+                continue
+            try:
+                values.append(int(token))
+            except ValueError:
+                continue
+        if values:
+            seen: set[int] = set()
+            ordered: list[int] = []
+            for value in values:
+                if value not in seen:
+                    seen.add(value)
+                    ordered.append(value)
+            return ordered
+
+    defaults = [CAMERA_INDEX, 0, 1, 2, 3]
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for value in defaults:
+        if value not in seen:
+            seen.add(value)
+            ordered.append(value)
+    return ordered
+
+
+def _open_camera() -> cv2.VideoCapture:
+    candidates = _camera_index_candidates()
+    backend_flag = cv2.CAP_V4L2 if USE_V4L2 and hasattr(cv2, "CAP_V4L2") else None
+
+    for index in candidates:
+        capture = cv2.VideoCapture(index, backend_flag) if backend_flag is not None else cv2.VideoCapture(index)
+        if capture.isOpened():
+            if FRAME_WIDTH > 0:
+                capture.set(cv2.CAP_PROP_FRAME_WIDTH, float(FRAME_WIDTH))
+            if FRAME_HEIGHT > 0:
+                capture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(FRAME_HEIGHT))
+            if FRAME_FPS > 0:
+                capture.set(cv2.CAP_PROP_FPS, float(FRAME_FPS))
+            print(f"[Camera] Opened camera index {index}" + (" with CAP_V4L2" if backend_flag is not None else ""))
+            return capture
+        capture.release()
+
+    raise RuntimeError(
+        f"Could not open camera. Tried indices={candidates}"
+        + (" using CAP_V4L2" if backend_flag is not None else "")
+        + ". Set CAMERA_INDEX or CAMERA_INDEX_CANDIDATES in hardware/.env."
+    )
+
+
+def _encode_frame_to_base64_jpeg(frame) -> str:
+    success, buffer = cv2.imencode(
+        ".jpg",
+        frame,
+        [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY],
+    )
+    if not success:
+        raise RuntimeError("Failed to encode frame as JPEG")
+    return base64.b64encode(buffer.tobytes()).decode("ascii")
+
+
+async def _recv_loop(ws: websockets.ClientConnection) -> None:
+    warned_audio_drop = False
+    async for raw in ws:
+        try:
+            message = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+
+        message_type = message.get("type")
+        if message_type in {"session_started", "turn_complete", "interrupted"}:
+            print(f"[WS] {message_type}")
+        elif message_type == "text":
+            print(f"[Gemini] {message.get('text', '')}")
+        elif message_type == "input_transcription":
+            print(f"[User Transcript] {message.get('text', '')}")
+        elif message_type == "error":
+            error_message = str(message.get("message", "Unknown error"))
+            print(f"[WS Error] {error_message}")
+            if "already active" in error_message.lower():
+                raise SourceAlreadyActiveError(error_message)
+        elif message_type == "audio" and not warned_audio_drop:
+            warned_audio_drop = True
+            print("[WS] Received Gemini audio chunks. Pi client is video-only; browser handles speaker output.")
+
+
+async def _send_video_loop(ws: websockets.ClientConnection, stop_event: asyncio.Event) -> None:
+    capture = _open_camera()
+
+    frame_interval = 1.0 / max(FRAME_FPS, 0.1)
+    next_send = asyncio.get_running_loop().time()
+
+    try:
+        while not stop_event.is_set():
+            ok, frame = capture.read()
+            if not ok:
+                await asyncio.sleep(0.1)
+                continue
+
+            if FRAME_WIDTH > 0 and FRAME_HEIGHT > 0:
+                if frame.shape[1] != FRAME_WIDTH or frame.shape[0] != FRAME_HEIGHT:
+                    frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT), interpolation=cv2.INTER_AREA)
+
+            payload = {
+                "type": "video",
+                "data": _encode_frame_to_base64_jpeg(frame),
+            }
+            await ws.send(json.dumps(payload))
+
+            next_send += frame_interval
+            sleep_for = next_send - asyncio.get_running_loop().time()
+            if sleep_for > 0:
+                await asyncio.sleep(sleep_for)
+            else:
+                next_send = asyncio.get_running_loop().time()
+    finally:
+        capture.release()
+
+
+async def stream_camera_to_backend(stop_event: asyncio.Event) -> None:
+    while not stop_event.is_set():
+        try:
+            print(f"[WS] Connecting to {RESOLVED_BACKEND_WS_URL}")
+            async with websockets.connect(
+                RESOLVED_BACKEND_WS_URL,
+                ping_interval=20,
+                ping_timeout=45,
+                compression=None,
+            ) as ws:
+                recv_task = asyncio.create_task(_recv_loop(ws))
+                send_task = asyncio.create_task(_send_video_loop(ws, stop_event))
+
+                done, pending = await asyncio.wait(
+                    [recv_task, send_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+
+                for task in done:
+                    task.result()
+
+        except asyncio.CancelledError:
+            raise
+        except SourceAlreadyActiveError as exc:
+            print(f"[WS] Source rejected by server: {exc}")
+            if not stop_event.is_set():
+                await asyncio.sleep(max(RECONNECT_DELAY_SEC, 5.0))
+        except Exception as exc:
+            print(f"[WS] Connection lost: {exc}")
+            if not stop_event.is_set():
+                await asyncio.sleep(RECONNECT_DELAY_SEC)
+
+
+async def main() -> None:
+    stop_event = asyncio.Event()
+
+    loop = asyncio.get_running_loop()
+
+    def _request_stop() -> None:
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _request_stop)
+        except NotImplementedError:
+            pass
+
+    print(f"[Config] BACKEND_WS_URL={RESOLVED_BACKEND_WS_URL}")
+    print("[Config] Source mode=video-only. Use browser viewer microphone for Gemini audio input.")
+    if "localhost" in RESOLVED_BACKEND_WS_URL or "127.0.0.1" in RESOLVED_BACKEND_WS_URL:
+        print("[Warning] Backend URL points to localhost. On Raspberry Pi, set PC_LAN_IP or BACKEND_HOST to your PC IP.")
+    print(f"[Config] CAMERA_INDEX={CAMERA_INDEX}, CAMERA_INDEX_CANDIDATES={CAMERA_INDEX_CANDIDATES or 'auto'}, USE_V4L2={USE_V4L2}")
+    print(
+        f"[Config] FRAME_FPS={FRAME_FPS}, JPEG_QUALITY={JPEG_QUALITY}, "
+        f"FRAME_WIDTH={FRAME_WIDTH}, FRAME_HEIGHT={FRAME_HEIGHT}"
+    )
+    await stream_camera_to_backend(stop_event)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
