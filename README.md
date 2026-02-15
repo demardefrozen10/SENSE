@@ -1,4 +1,4 @@
-# 🧠 S.E.N.S.E — Accessibility Wearable
+# 🧠 S.E.N.S.E - Spatial Environment Navigation & Safety Engine
 
 > **CTRL+HACK+DEL 2.0 Hackathon Project**
 > A real-time AI-powered wearable that helps visually impaired users navigate the world using spatial audio, haptic feedback, and computer vision.
@@ -11,7 +11,7 @@ Webcam (C270) ──────► Raspberry Pi 4 (Brain) ◄──────
                           ├── Thread B: Distance Trigger → Gemini 2.0 Flash
                           ├── ElevenLabs TTS → USB Audio Output (~75ms)
                           ├── PySerial (115200) ← HC-SR04 Sensor Data
-                          └── WebSocket → React Dashboard (neon overlays)
+                          └── WebSocket → React Dashboard (customizable)
 ```
 
 ## Quick Start
@@ -52,7 +52,7 @@ python3 brain.py
 - **Arduino Nano** — Dedicated low-latency sensor controller (The Spinal Cord)
 - **HC-SR04** — Ultrasonic distance sensor for immediate obstacle detection
 - **Active Buzzer** - Multi-modal feedback (Variable frequency pulses based on proximity)
-- **USB Sound Card** - Dedicated high-quality audio output for ElevenLabs
+- **Power Bank** - Portable Power USB-C (3A Output)
 
 ## System Logic
 1. **The Spinal Cord (Arduino):** Handles immediate safety. It measures distance and triggers the buzzer pulses. It operates independently of the Pi to ensure zero-latency feedback.
