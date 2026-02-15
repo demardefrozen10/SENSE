@@ -16,6 +16,7 @@ import {
   Volume2,
 } from 'lucide-react'
 
+import { Dashboard as DashboardSettings } from '@/components/Dashboard'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
@@ -56,9 +57,9 @@ function Panel({
   className?: string
 }) {
   return (
-    <Card className={`border-white/10 bg-card ${className}`}>
+    <Card className={className}>
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-white">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
           {icon}
           {title}
         </CardTitle>
@@ -330,13 +331,13 @@ export function DashboardPage() {
 
   /* ---------- render ---------- */
   return (
-    <main className="min-h-screen bg-background text-white">
+    <main className="min-h-screen bg-background text-foreground">
       {/* Header */}
-      <header className="border-b border-white/10 bg-background px-4 py-4 shadow-sm">
+      <header className="border-b border-border bg-background px-4 py-4 shadow-sm">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <Glasses className="h-6 w-6 text-white" />
-            <p className="text-xl font-bold italic tracking-tight text-white">VibeGlasses</p>
+            <Glasses className="h-6 w-6 text-foreground" />
+            <p className="text-xl font-bold italic tracking-tight text-foreground">S.E.N.S.E.</p>
             <span className="ml-2 text-sm text-muted-foreground">Live</span>
           </div>
 
@@ -358,7 +359,7 @@ export function DashboardPage() {
             <Button
               variant="outline"
               size="sm"
-              className="border-white/10 hover:bg-white/5"
+              className="border-border bg-background hover:bg-card"
               onClick={() => navigate('/voice-studio')}
             >
               <SlidersHorizontal className="mr-2 h-4 w-4" />
@@ -367,7 +368,7 @@ export function DashboardPage() {
             <Button
               variant="outline"
               size="sm"
-              className="border-white/10 hover:bg-white/5"
+              className="border-border bg-background hover:bg-card"
               onClick={handleLogout}
             >
               <LogOut className="mr-2 h-4 w-4" />
@@ -380,7 +381,7 @@ export function DashboardPage() {
       {/* Body */}
       <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-6 p-6 xl:grid-cols-[minmax(0,1fr)_380px]">
         {/* Video panel */}
-        <section className="relative flex min-h-[70vh] flex-col overflow-hidden rounded-xl border border-white/10 bg-black shadow-lg">
+        <section className="relative flex min-h-[70vh] flex-col overflow-hidden rounded-xl border border-border bg-black shadow-lg">
           <video
             ref={videoRef}
             className="absolute inset-0 h-full w-full object-contain"
@@ -392,9 +393,9 @@ export function DashboardPage() {
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
 
           {!cameraOn && (
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-white/10 bg-background/95 px-8 py-6 text-center backdrop-blur-sm">
-              <Camera className="mx-auto mb-3 h-12 w-12 text-white" />
-              <p className="text-xl font-semibold text-white">Camera is off</p>
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-background/95 px-8 py-6 text-center backdrop-blur-sm">
+              <Camera className="mx-auto mb-3 h-12 w-12 text-foreground" />
+              <p className="text-xl font-semibold text-foreground">Camera is off</p>
               <p className="mt-2 text-sm text-muted-foreground">
                 Click &ldquo;Start Camera&rdquo; to begin streaming to Gemini&nbsp;Live
               </p>
@@ -430,29 +431,31 @@ export function DashboardPage() {
 
         {/* Right sidebar */}
         <aside className="flex flex-col gap-4">
+          <DashboardSettings />
+
           <Panel title="Connection" icon={<User className="h-4 w-4" />}>
             <div className="space-y-2 text-sm text-muted-foreground">
               <p>
-                <span className="font-medium text-white">Backend:</span>{' '}
+                <span className="font-medium text-foreground">Backend:</span>{' '}
                 <span className="text-xs">{apiBase}</span>
               </p>
               <p>
-                <span className="font-medium text-white">Camera:</span>{' '}
+                <span className="font-medium text-foreground">Camera:</span>{' '}
                 {cameraOn ? '🟢 streaming' : '⚫ off'}
               </p>
               <p>
-                <span className="font-medium text-white">Mic:</span>{' '}
+                <span className="font-medium text-foreground">Mic:</span>{' '}
                 {micOn ? '🟢 streaming' : '⚫ off'}
               </p>
               <p>
-                <span className="font-medium text-white">Gemini:</span>{' '}
+                <span className="font-medium text-foreground">Gemini:</span>{' '}
                 {sessionActive ? '🟢 live session' : '⚫ not connected'}
               </p>
             </div>
           </Panel>
 
           <Panel title="Gemini Response" icon={<Volume2 className="h-4 w-4" />}>
-            <div className="max-h-[200px] overflow-y-auto whitespace-pre-wrap text-sm text-white">
+            <div className="max-h-[200px] overflow-y-auto whitespace-pre-wrap text-sm text-foreground">
               {transcript || (
                 <span className="text-muted-foreground">
                   Gemini audio responses play automatically. Text transcripts appear here.
@@ -463,7 +466,7 @@ export function DashboardPage() {
               <Button
                 variant="outline"
                 size="sm"
-                className="mt-2 border-white/10 text-xs"
+                className="mt-2 border-border bg-background text-xs hover:bg-card"
                 onClick={() => setTranscript('')}
               >
                 Clear
@@ -490,11 +493,11 @@ export function DashboardPage() {
                 name="msg"
                 type="text"
                 placeholder="Type a message to Gemini..."
-                className="h-10 flex-1 rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                className="h-10 flex-1 rounded-lg border border-input bg-card px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
               />
               <Button
                 type="submit"
-                className="h-10 bg-white text-sm font-semibold text-black hover:bg-white/90"
+                className="h-10 bg-foreground text-sm font-semibold text-background hover:opacity-90"
               >
                 Send
               </Button>
@@ -507,9 +510,9 @@ export function DashboardPage() {
                 <p className="text-muted-foreground">Waiting for events...</p>
               )}
               {eventLog.map((entry) => (
-                <div key={entry.id} className="border-b border-white/5 pb-1.5">
+                <div key={entry.id} className="border-b border-border/40 pb-1.5">
                   <span className="font-medium text-muted-foreground">[{entry.time}]</span>
-                  <span className="ml-2 text-white">{entry.text}</span>
+                  <span className="ml-2 text-foreground">{entry.text}</span>
                 </div>
               ))}
             </div>

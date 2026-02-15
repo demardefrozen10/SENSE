@@ -212,7 +212,7 @@ export function VoiceStudioPage() {
         body: JSON.stringify({
           ...currentProfile,
           voice_id: voiceId,
-          text: previewText.trim() || 'Echo-Sight voice preview.',
+          text: previewText.trim() || 'S.E.N.S.E. voice preview.',
         }),
       })
       if (response.status === 204) {
@@ -237,7 +237,7 @@ export function VoiceStudioPage() {
       <header className="border-b border-[#f8b15f]/50 bg-[#1a0f07]/95 px-5 py-4 backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-[#ffd6a2]">Echo-Sight</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-[#ffd6a2]">S.E.N.S.E.</p>
             <h1 className="text-2xl font-semibold text-[#fff2dd]">Voice Studio</h1>
           </div>
           <Button
