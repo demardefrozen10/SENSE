@@ -116,6 +116,19 @@
     white-space: normal;
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
   .hero-brand-logo {
     filter: var(--logo-filter);
     transition: filter 0.2s ease-in-out;
@@ -143,16 +156,5 @@
 
   .modal-scrim {
     background-color: var(--scrim);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
-      animation-duration: 0.01ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
-      scroll-behavior: auto !important;
-    }
   }
 }
