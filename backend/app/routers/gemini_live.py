@@ -1,10 +1,7 @@
 """Gemini Live API WebSocket proxy.
 
-Browser  ──WS──▶  FastAPI  ──WS──▶  Gemini Live API
-  webcam frames (JPEG b64)           send_realtime_input(media=…)
-  mic audio   (PCM  b64)            send_realtime_input(audio=…)
-◀── audio chunks (PCM b64)     ◀──  response audio
-◀── text   (transcript)        ◀──  response text
+Pi source (role=source) sends camera frames only.
+Browser viewer (role=viewer) sends mic audio and optional text commands.
 """
 
 from __future__ import annotations
@@ -43,6 +40,15 @@ def _offer_latest_video_frame(queue: asyncio.Queue[str], b64_data: str) -> None:
     except asyncio.QueueFull:
         pass
 
+
+def _drain_control_queue() -> None:
+    while not _control_queue.empty():
+        try:
+            _control_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+
+
 # ---------------------------------------------------------------------------
 # Gemini Live session configuration
 # ---------------------------------------------------------------------------
@@ -50,7 +56,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 MODEL = "gemini-2.5-flash-native-audio-latest"
 
 SYSTEM_INSTRUCTION = (
-    "You are an alert assistant. Only transcribe what you see and do not reply to prompts or any other questions from the person."
+    "You are Echo-Sight, a live multimodal assistant. "
+    "Use the camera feed plus user speech/text to answer questions directly. "
+    "Prioritize safety and navigation details when relevant. "
+    "Keep responses concise and natural unless the user asks for detail."
 )
 
 
@@ -61,6 +70,8 @@ def _build_config() -> types.LiveConnectConfig:
         system_instruction=types.Content(
             parts=[types.Part(text=SYSTEM_INSTRUCTION)]
         ),
+        input_audio_transcription=types.AudioTranscriptionConfig(),
+        output_audio_transcription=types.AudioTranscriptionConfig(),
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -79,8 +90,8 @@ def _build_config() -> types.LiveConnectConfig:
 async def gemini_live_proxy(ws: WebSocket) -> None:
     """Proxy between WebSocket clients and Gemini Live API session.
 
-    role=source: sends video/audio to Gemini (Pi client)
-    role=viewer: receives Gemini responses and can send text commands (dashboard)
+    role=source: sends Pi video frames to Gemini
+    role=viewer: sends browser mic audio/text and receives Gemini responses
     """
     role = (ws.query_params.get("role") or "source").lower()
     logger.info("[DEBUG] /ws/live hit  role=%s  client=%s", role, ws.client)
@@ -90,6 +101,14 @@ async def gemini_live_proxy(ws: WebSocket) -> None:
 
     await ws.accept()
     logger.info("[DEBUG] Source WebSocket ACCEPTED  client=%s", ws.client)
+
+    if not GEMINI_API_KEY:
+        await ws.send_text(json.dumps({
+            "type": "error",
+            "message": "GEMINI_API_KEY is not configured on the server.",
+        }))
+        await ws.close()
+        return
 
     global _source_connected
     async with _source_lock:
@@ -101,16 +120,10 @@ async def gemini_live_proxy(ws: WebSocket) -> None:
             await ws.close()
             return
         _source_connected = True
+
     logger.info("[DEBUG] source_connected broadcast sent to viewers")
     await _broadcast_to_viewers({"type": "source_connected"})
-
-    if not GEMINI_API_KEY:
-        await ws.send_text(json.dumps({
-            "type": "error",
-            "message": "GEMINI_API_KEY is not configured on the server.",
-        }))
-        await ws.close()
-        return
+    _drain_control_queue()
 
     client = genai.Client(
         api_key=GEMINI_API_KEY,
@@ -146,7 +159,6 @@ async def gemini_live_proxy(ws: WebSocket) -> None:
             )
             for task in pending:
                 task.cancel()
-            # Propagate any exception from the completed task
             for task in done:
                 task.result()
 
@@ -210,7 +222,6 @@ async def _viewer_loop(ws: WebSocket) -> None:
                 await _control_queue.put({"type": "text", "text": text})
 
             elif msg_type == "audio":
-                # Forward viewer mic audio to Gemini via the control queue
                 b64_data = msg.get("data", "")
                 if b64_data and _source_connected:
                     await _control_queue.put({"type": "audio", "data": b64_data})
@@ -235,46 +246,43 @@ async def _forward_source_to_gemini(
     session,
     video_queue: asyncio.Queue[str],
 ) -> None:
-    """Read messages from source WS and forward to Gemini Live."""
-    _frame_count = 0
+    """Read messages from source WS and forward video to Gemini Live."""
+    frame_count = 0
     while True:
         raw = await ws.receive_text()
         msg = json.loads(raw)
         msg_type = msg.get("type")
 
         if msg_type == "video":
-            _frame_count += 1
+            frame_count += 1
             b64_data = msg["data"]
             n_viewers = len(_viewer_clients)
-            if _frame_count <= 3 or _frame_count % 10 == 0:
+            if frame_count <= 3 or frame_count % 10 == 0:
                 logger.info(
                     "[DEBUG] video frame #%d received from source  "
                     "b64_len=%d  viewers=%d",
-                    _frame_count, len(b64_data), n_viewers,
+                    frame_count,
+                    len(b64_data),
+                    n_viewers,
                 )
             await _broadcast_to_viewers({"type": "video_preview", "data": b64_data})
             _offer_latest_video_frame(video_queue, b64_data)
 
         elif msg_type == "audio":
-            # Browser sends: {"type":"audio","data":"<base64 PCM 16-bit 16kHz mono>"}
-            b64_data = msg["data"]
-            await session.send_realtime_input(
-                audio=types.Blob(
-                    data=base64.b64decode(b64_data),
-                    mime_type="audio/pcm;rate=16000",
-                )
+            logger.warning(
+                "Ignoring audio from source client. Use browser viewer mic for Live audio input."
             )
 
         elif msg_type == "text":
-            # Browser sends: {"type":"text","text":"hello"}
-            text = msg.get("text", "")
-            await session.send_client_content(
-                turns=types.Content(parts=[types.Part(text=text)]),
-                turn_complete=True,
-            )
+            text = str(msg.get("text", "")).strip()
+            if text:
+                await session.send_client_content(
+                    turns=types.Content(parts=[types.Part(text=text)]),
+                    turn_complete=True,
+                )
 
         elif msg_type == "end_audio_stream":
-            await session.send_realtime_input(audio_stream_end=True)
+            logger.warning("Ignoring end_audio_stream from source client.")
 
 
 async def _forward_video_to_gemini(
@@ -285,7 +293,7 @@ async def _forward_video_to_gemini(
     while True:
         b64_data = await video_queue.get()
         await session.send_realtime_input(
-            media=types.Blob(
+            video=types.Blob(
                 mime_type="image/jpeg",
                 data=base64.b64decode(b64_data),
             )
@@ -325,7 +333,8 @@ async def _forward_gemini_to_clients(
     while True:
         turn = session.receive()
         async for response in turn:
-            # Audio data
+            sent_text_chunk = False
+
             if data := response.data:
                 payload = {
                     "type": "audio",
@@ -333,9 +342,7 @@ async def _forward_gemini_to_clients(
                 }
                 await ws.send_text(json.dumps(payload))
                 await _broadcast_to_viewers(payload)
-                continue
 
-            # Text content
             if text := response.text:
                 payload = {
                     "type": "text",
@@ -343,17 +350,37 @@ async def _forward_gemini_to_clients(
                 }
                 await ws.send_text(json.dumps(payload))
                 await _broadcast_to_viewers(payload)
-                continue
+                sent_text_chunk = True
 
-            # Check for interruption
             sc = response.server_content
+
+            if sc and sc.input_transcription:
+                input_text = str(getattr(sc.input_transcription, "text", "") or "").strip()
+                input_finished = bool(getattr(sc.input_transcription, "finished", False))
+                if input_text and input_finished:
+                    payload = {
+                        "type": "input_transcription",
+                        "text": input_text,
+                    }
+                    await ws.send_text(json.dumps(payload))
+                    await _broadcast_to_viewers(payload)
+
+            if sc and sc.output_transcription and not sent_text_chunk:
+                output_text = str(getattr(sc.output_transcription, "text", "") or "").strip()
+                output_finished = bool(getattr(sc.output_transcription, "finished", False))
+                if output_text and output_finished:
+                    payload = {
+                        "type": "text",
+                        "text": output_text,
+                    }
+                    await ws.send_text(json.dumps(payload))
+                    await _broadcast_to_viewers(payload)
+
             if sc and getattr(sc, "interrupted", False):
                 payload = {"type": "interrupted"}
                 await ws.send_text(json.dumps(payload))
                 await _broadcast_to_viewers(payload)
 
-            # Turn complete
-            sc = response.server_content
             if sc and getattr(sc, "turn_complete", False):
                 payload = {"type": "turn_complete"}
                 await ws.send_text(json.dumps(payload))
@@ -366,7 +393,7 @@ async def _broadcast_to_viewers(payload: dict) -> None:
     async with _viewer_lock:
         viewers = list(_viewer_clients)
 
-    if msg_type != "video_preview":  # avoid spamming logs for every frame
+    if msg_type != "video_preview":
         logger.info("[DEBUG] broadcast  type=%s  to %d viewer(s)", msg_type, len(viewers))
 
     stale: list[WebSocket] = []

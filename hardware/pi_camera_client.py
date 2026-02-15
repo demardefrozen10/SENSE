@@ -16,7 +16,7 @@ load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
 
 BACKEND_WS_URL = os.getenv("BACKEND_WS_URL", "").strip()
 BACKEND_HOST = os.getenv("BACKEND_HOST", "").strip()
-BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8000"))
+BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8010"))
 BACKEND_WS_PATH = os.getenv("BACKEND_WS_PATH", "/ws/live").strip() or "/ws/live"
 PC_LAN_IP = os.getenv("PC_LAN_IP", "").strip()
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
@@ -119,6 +119,7 @@ def _encode_frame_to_base64_jpeg(frame) -> str:
 
 
 async def _recv_loop(ws: websockets.ClientConnection) -> None:
+    warned_audio_drop = False
     async for raw in ws:
         try:
             message = json.loads(raw)
@@ -130,10 +131,13 @@ async def _recv_loop(ws: websockets.ClientConnection) -> None:
             print(f"[WS] {message_type}")
         elif message_type == "text":
             print(f"[Gemini] {message.get('text', '')}")
+        elif message_type == "input_transcription":
+            print(f"[User Transcript] {message.get('text', '')}")
         elif message_type == "error":
             print(f"[WS Error] {message.get('message', 'Unknown error')}")
-        elif message_type == "audio":
-            pass
+        elif message_type == "audio" and not warned_audio_drop:
+            warned_audio_drop = True
+            print("[WS] Received Gemini audio chunks. Pi client is video-only; browser handles speaker output.")
 
 
 async def _send_video_loop(ws: websockets.ClientConnection, stop_event: asyncio.Event) -> None:
@@ -216,6 +220,7 @@ async def main() -> None:
             pass
 
     print(f"[Config] BACKEND_WS_URL={RESOLVED_BACKEND_WS_URL}")
+    print("[Config] Source mode=video-only. Use browser viewer microphone for Gemini audio input.")
     if "localhost" in RESOLVED_BACKEND_WS_URL or "127.0.0.1" in RESOLVED_BACKEND_WS_URL:
         print("[Warning] Backend URL points to localhost. On Raspberry Pi, set PC_LAN_IP or BACKEND_HOST to your PC IP.")
     print(f"[Config] CAMERA_INDEX={CAMERA_INDEX}, CAMERA_INDEX_CANDIDATES={CAMERA_INDEX_CANDIDATES or 'auto'}, USE_V4L2={USE_V4L2}")
