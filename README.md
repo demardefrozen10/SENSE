@@ -1,4 +1,4 @@
-# 🧠 S.E.N.S.E — Accessibility Wearable
+# 🧠 S.E.N.S.E - Spatial Environment Navigation & Safety Engine
 
 > **CTRL+HACK+DEL 2.0 Hackathon Project**
 > A real-time AI-powered wearable that helps visually impaired users navigate the world using spatial audio, haptic feedback, and computer vision.
@@ -11,7 +11,7 @@ Webcam (C270) ──────► Raspberry Pi 4 (Brain) ◄──────
                           ├── Thread B: Distance Trigger → Gemini 2.0 Flash
                           ├── ElevenLabs TTS → USB Audio Output (~75ms)
                           ├── PySerial (115200) ← HC-SR04 Sensor Data
-                          └── WebSocket → React Dashboard (neon overlays)
+                          └── WebSocket → React Dashboard (customizable)
 ```
 
 ## Quick Start
@@ -43,20 +43,20 @@ INFERENCE_INTERVAL_MS=5000 # Cooldown to prevent API spam
 
 ### 4. Run the Brain
 ```bash
-python3 brain.py
+python3 main.py
 ```
 
 ## Hardware
-- **Raspberry Pi 4** — Central Processing Unit (The Brain)
+- **Raspberry Pi 4** — Central Processing Unit
 - **Logitech C270 Webcam** — 720p vision system
 - **Arduino Nano** — Dedicated low-latency sensor controller (The Spinal Cord)
 - **HC-SR04** — Ultrasonic distance sensor for immediate obstacle detection
 - **Active Buzzer** - Multi-modal feedback (Variable frequency pulses based on proximity)
-- **USB Sound Card** - Dedicated high-quality audio output for ElevenLabs
+- **Power Bank** - Portable Power USB-C (3A Output)
 
 ## System Logic
-1. **The Spinal Cord (Arduino):** Handles immediate safety. It measures distance and triggers the buzzer pulses. It operates independently of the Pi to ensure zero-latency feedback.
-2. **The Brain (Raspberry Pi):** Listens to the Arduino via Serial. When an object is detected within 50cm, it triggers the Gemini Vision API to describe the scene via ElevenLabs.
+1. **Arduino:** Handles immediate safety. It measures distance and triggers the buzzer pulses. It operates independently of the Pi to ensure zero-latency feedback.
+2. **Raspberry Pi:** Captures raw video frames and streams them via WebSockets to the React Dashboard. The Dashboard maintains a real-time, multimodal session with the Gemini Live API. The AI watches the video feed and provides conversational audio guidance (e.g., "There is a path clearing to your left") directly to the user.
 
 ## API Endpoints
 | Endpoint | Method | Description |
