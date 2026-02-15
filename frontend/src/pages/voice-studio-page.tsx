@@ -26,20 +26,6 @@ type VoiceProfile = {
   playback_speed: number
 }
 
-type VoiceCapabilities = {
-  models: string[]
-  output_formats: string[]
-  optimize_streaming_latency: string[]
-  text_normalization: string[]
-  defaults: {
-    model_id?: string
-    output_format?: string
-    optimize_streaming_latency?: string
-    use_speaker_boost?: boolean
-    apply_text_normalization?: string
-  }
-}
-
 type InclusionFilter = 'any' | 'include' | 'exclude'
 
 type Filters = {
@@ -74,10 +60,6 @@ function prettyLabel(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
 }
 
-function uniqueStrings(values: string[]) {
-  return Array.from(new Set(values.filter((value) => Boolean(value))))
-}
-
 export function VoiceStudioPage() {
   const navigate = useNavigate()
   const apiBase = useMemo(apiBaseUrl, [])
@@ -97,24 +79,6 @@ export function VoiceStudioPage() {
   const [clarity, setClarity] = useState(0.75)
   const [styleExaggeration, setStyleExaggeration] = useState(0.0)
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0)
-  const [capabilities, setCapabilities] = useState<VoiceCapabilities | null>(null)
-  const [modelId, setModelId] = useState('eleven_flash_v2_5')
-  const [stsModelId, setStsModelId] = useState('eleven_multilingual_sts_v2')
-  const [outputFormat, setOutputFormat] = useState('mp3_22050_32')
-  const [optimizeStreamingLatency, setOptimizeStreamingLatency] = useState('4')
-  const [textNormalization, setTextNormalization] = useState<'auto' | 'on' | 'off'>('auto')
-  const [useSpeakerBoost, setUseSpeakerBoost] = useState(true)
-  const [enableLogging, setEnableLogging] = useState(true)
-  const [streamPreview, setStreamPreview] = useState(true)
-  const [languageCode, setLanguageCode] = useState('')
-  const [seedInput, setSeedInput] = useState('')
-  const [transformFile, setTransformFile] = useState<File | null>(null)
-  const [effectText, setEffectText] = useState('soft warning beep')
-  const [dubbingSourceUrl, setDubbingSourceUrl] = useState('')
-  const [dubbingTargetLang, setDubbingTargetLang] = useState('en')
-  const [dubbingSourceLang, setDubbingSourceLang] = useState('')
-  const [toolBusy, setToolBusy] = useState<'none' | 's2s' | 'changer' | 'sfx' | 'dubbing'>('none')
-  const [lastDubbingResult, setLastDubbingResult] = useState<Record<string, unknown> | null>(null)
   const lastAudioUrlRef = useRef<string | null>(null)
 
   const [filters, setFilters] = useState<Filters>({
@@ -159,10 +123,9 @@ export function VoiceStudioPage() {
     const load = async () => {
       setLoading(true)
       try {
-        const [voicesRes, profileRes, capabilitiesRes] = await Promise.all([
+        const [voicesRes, profileRes] = await Promise.all([
           fetch(`${apiBase}/voice-studio/voices`, { headers: authHeaders }),
           fetch(`${apiBase}/voice-studio/profile`, { headers: authHeaders }),
-          fetch(`${apiBase}/voice-studio/capabilities`, { headers: authHeaders }),
         ])
 
         if (!voicesRes.ok) {
@@ -174,10 +137,6 @@ export function VoiceStudioPage() {
 
         const voicesPayload = (await voicesRes.json()) as { voices: VoiceItem[] }
         const profilePayload = (await profileRes.json()) as VoiceProfile
-        let capabilitiesPayload: VoiceCapabilities | null = null
-        if (capabilitiesRes.ok) {
-          capabilitiesPayload = (await capabilitiesRes.json()) as VoiceCapabilities
-        }
 
         setVoices(voicesPayload.voices || [])
         setSelectedVoiceId(profilePayload.voice_id || voicesPayload.voices?.[0]?.voice_id || '')
@@ -185,24 +144,6 @@ export function VoiceStudioPage() {
         setClarity(profilePayload.clarity ?? 0.75)
         setStyleExaggeration(profilePayload.style_exaggeration ?? 0.0)
         setPlaybackSpeed(profilePayload.playback_speed ?? 1.0)
-        setCapabilities(capabilitiesPayload)
-
-        if (capabilitiesPayload?.defaults) {
-          if (capabilitiesPayload.defaults.model_id) setModelId(capabilitiesPayload.defaults.model_id)
-          if (capabilitiesPayload.defaults.output_format) setOutputFormat(capabilitiesPayload.defaults.output_format)
-          if (capabilitiesPayload.defaults.optimize_streaming_latency) {
-            setOptimizeStreamingLatency(capabilitiesPayload.defaults.optimize_streaming_latency)
-          }
-          if (capabilitiesPayload.defaults.apply_text_normalization) {
-            const nextMode = capabilitiesPayload.defaults.apply_text_normalization
-            if (nextMode === 'auto' || nextMode === 'on' || nextMode === 'off') {
-              setTextNormalization(nextMode)
-            }
-          }
-          if (typeof capabilitiesPayload.defaults.use_speaker_boost === 'boolean') {
-            setUseSpeakerBoost(capabilitiesPayload.defaults.use_speaker_boost)
-          }
-        }
         announce('Voice Studio loaded. All controls are keyboard accessible.')
       } catch (error) {
         announce(error instanceof Error ? error.message : 'Failed to load voice studio')
@@ -242,44 +183,6 @@ export function VoiceStudioPage() {
     [clarity, playbackSpeed, selectedVoiceId, stability, styleExaggeration],
   )
 
-  const modelOptions = useMemo(
-    () =>
-      uniqueStrings([
-        ...(capabilities?.models || []),
-        'eleven_flash_v2_5',
-        'eleven_turbo_v2_5',
-        'eleven_multilingual_v2',
-      ]),
-    [capabilities],
-  )
-
-  const outputFormatOptions = useMemo(
-    () =>
-      uniqueStrings([
-        ...(capabilities?.output_formats || []),
-        'mp3_22050_32',
-        'mp3_44100_64',
-        'mp3_44100_128',
-        'pcm_16000',
-        'pcm_22050',
-      ]),
-    [capabilities],
-  )
-
-  const latencyOptions = useMemo(
-    () =>
-      uniqueStrings([...(capabilities?.optimize_streaming_latency || []), '0', '1', '2', '3', '4']),
-    [capabilities],
-  )
-
-  const textNormalizationOptions = useMemo(
-    () =>
-      uniqueStrings([...(capabilities?.text_normalization || []), 'auto', 'on', 'off']).filter(
-        (value) => value === 'auto' || value === 'on' || value === 'off',
-      ),
-    [capabilities],
-  )
-
   const saveProfile = async () => {
     if (!selectedVoiceId) {
       announce('Select a voice before saving.')
@@ -299,6 +202,7 @@ export function VoiceStudioPage() {
         throw new Error(`Save failed (${response.status})`)
       }
       announce(`Saved voice profile: ${selectedVoice?.name ?? selectedVoiceId}`)
+      navigate('/dashboard')
     } catch (error) {
       announce(error instanceof Error ? error.message : 'Failed to save voice profile')
     } finally {
@@ -314,20 +218,6 @@ export function VoiceStudioPage() {
         ...currentProfile,
         voice_id: voiceId,
         text: previewText.trim() || 'S.E.N.S.E. voice preview.',
-        model_id: modelId,
-        output_format: outputFormat,
-        optimize_streaming_latency: optimizeStreamingLatency,
-        use_speaker_boost: useSpeakerBoost,
-        apply_text_normalization: textNormalization,
-        enable_logging: enableLogging,
-        stream: streamPreview,
-      }
-      if (languageCode.trim()) payload.language_code = languageCode.trim()
-      if (seedInput.trim()) {
-        const parsedSeed = Number(seedInput.trim())
-        if (Number.isInteger(parsedSeed)) {
-          payload.seed = parsedSeed
-        }
       }
 
       const response = await fetch(`${apiBase}/voice-studio/preview`, {
@@ -361,141 +251,6 @@ export function VoiceStudioPage() {
     }
   }
 
-  const readErrorDetail = async (response: Response) => {
-    try {
-      const payload = (await response.json()) as { detail?: unknown; message?: unknown }
-      if (typeof payload.detail === 'string') return payload.detail
-      if (payload.detail) return JSON.stringify(payload.detail)
-      if (typeof payload.message === 'string') return payload.message
-    } catch {
-      // ignore parse errors and fall back to generic text
-    }
-    return `Request failed (${response.status})`
-  }
-
-  const buildTransformFormData = (removeBackgroundNoise: boolean) => {
-    if (!transformFile) {
-      throw new Error('Choose an audio file first.')
-    }
-    if (!selectedVoiceId) {
-      throw new Error('Select a voice first.')
-    }
-    const formData = new FormData()
-    formData.append('audio', transformFile)
-    formData.append('voice_id', selectedVoiceId)
-    formData.append('model_id', stsModelId)
-    formData.append('output_format', outputFormat)
-    formData.append('optimize_streaming_latency', optimizeStreamingLatency)
-    formData.append('enable_logging', String(enableLogging))
-    formData.append('stream', String(streamPreview))
-    formData.append('stability', String(stability))
-    formData.append('clarity', String(clarity))
-    formData.append('style_exaggeration', String(styleExaggeration))
-    formData.append('playback_speed', String(playbackSpeed))
-    formData.append('use_speaker_boost', String(useSpeakerBoost))
-    formData.append('remove_background_noise', String(removeBackgroundNoise))
-    if (seedInput.trim()) {
-      const parsedSeed = Number(seedInput.trim())
-      if (Number.isInteger(parsedSeed)) {
-        formData.append('seed', String(parsedSeed))
-      }
-    }
-    return formData
-  }
-
-  const runTransformTool = async (mode: 's2s' | 'changer') => {
-    const endpoint = mode === 's2s' ? 'speech-to-speech' : 'voice-changer'
-    const label = mode === 's2s' ? 'speech-to-speech' : 'voice changer'
-    setToolBusy(mode)
-    try {
-      const response = await fetch(`${apiBase}/elevenlabs/${endpoint}`, {
-        method: 'POST',
-        headers: authHeaders,
-        body: buildTransformFormData(mode === 'changer'),
-      })
-      if (!response.ok) {
-        throw new Error(await readErrorDetail(response))
-      }
-      const audioBlob = await response.blob()
-      if (lastAudioUrlRef.current) {
-        URL.revokeObjectURL(lastAudioUrlRef.current)
-      }
-      const audioUrl = URL.createObjectURL(audioBlob)
-      lastAudioUrlRef.current = audioUrl
-      const audio = new Audio(audioUrl)
-      await audio.play()
-      announce(`Playing ${label} output.`)
-    } catch (error) {
-      announce(error instanceof Error ? error.message : `Failed to run ${label}.`)
-    } finally {
-      setToolBusy('none')
-    }
-  }
-
-  const runSoundEffects = async () => {
-    setToolBusy('sfx')
-    try {
-      const response = await fetch(`${apiBase}/elevenlabs/sound-effects`, {
-        method: 'POST',
-        headers: {
-          ...authHeaders,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          text: effectText.trim() || 'soft warning beep',
-        }),
-      })
-      if (!response.ok) {
-        throw new Error(await readErrorDetail(response))
-      }
-      const audioBlob = await response.blob()
-      if (lastAudioUrlRef.current) {
-        URL.revokeObjectURL(lastAudioUrlRef.current)
-      }
-      const audioUrl = URL.createObjectURL(audioBlob)
-      lastAudioUrlRef.current = audioUrl
-      const audio = new Audio(audioUrl)
-      await audio.play()
-      announce('Playing generated sound effect.')
-    } catch (error) {
-      announce(error instanceof Error ? error.message : 'Sound effect generation failed.')
-    } finally {
-      setToolBusy('none')
-    }
-  }
-
-  const runDubbing = async () => {
-    setToolBusy('dubbing')
-    try {
-      if (!dubbingSourceUrl.trim()) {
-        throw new Error('Add a source media URL for dubbing.')
-      }
-      const formData = new FormData()
-      formData.append('target_lang', dubbingTargetLang.trim() || 'en')
-      formData.append('source_url', dubbingSourceUrl.trim())
-      if (dubbingSourceLang.trim()) {
-        formData.append('source_lang', dubbingSourceLang.trim())
-      }
-      formData.append('name', `EchoSight-${new Date().toISOString()}`)
-
-      const response = await fetch(`${apiBase}/elevenlabs/dubbing`, {
-        method: 'POST',
-        headers: authHeaders,
-        body: formData,
-      })
-      if (!response.ok) {
-        throw new Error(await readErrorDetail(response))
-      }
-      const payload = (await response.json()) as Record<string, unknown>
-      setLastDubbingResult(payload)
-      const dubbingId = typeof payload.dubbing_id === 'string' ? payload.dubbing_id : ''
-      announce(dubbingId ? `Dubbing created: ${dubbingId}` : 'Dubbing request submitted.')
-    } catch (error) {
-      announce(error instanceof Error ? error.message : 'Dubbing request failed.')
-    } finally {
-      setToolBusy('none')
-    }
-  }
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -705,153 +460,6 @@ export function VoiceStudioPage() {
             />
           </div>
 
-          <div className="space-y-4 border-t border-border pt-6">
-            <h3 className="text-base font-semibold text-foreground">ElevenLabs Advanced</h3>
-
-            <label htmlFor="model-id" className="block text-sm font-medium text-muted-foreground">
-              Model
-            </label>
-            <select
-              id="model-id"
-              aria-label="ElevenLabs model selection"
-              value={modelId}
-              onChange={(event) => setModelId(event.target.value)}
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-            >
-              {modelOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-
-            <label
-              htmlFor="output-format"
-              className="block text-sm font-medium text-muted-foreground"
-            >
-              Output Format
-            </label>
-            <select
-              id="output-format"
-              aria-label="ElevenLabs output audio format"
-              value={outputFormat}
-              onChange={(event) => setOutputFormat(event.target.value)}
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-            >
-              {outputFormatOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-
-            <label
-              htmlFor="latency-setting"
-              className="block text-sm font-medium text-muted-foreground"
-            >
-              Optimize Streaming Latency
-            </label>
-            <select
-              id="latency-setting"
-              aria-label="ElevenLabs optimize streaming latency level"
-              value={optimizeStreamingLatency}
-              onChange={(event) => setOptimizeStreamingLatency(event.target.value)}
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-            >
-              {latencyOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-
-            <label
-              htmlFor="text-normalization"
-              className="block text-sm font-medium text-muted-foreground"
-            >
-              Text Normalization
-            </label>
-            <select
-              id="text-normalization"
-              aria-label="ElevenLabs text normalization mode"
-              value={textNormalization}
-              onChange={(event) => {
-                const value = event.target.value
-                if (value === 'auto' || value === 'on' || value === 'off') {
-                  setTextNormalization(value)
-                }
-              }}
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-            >
-              {textNormalizationOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-
-            <label
-              htmlFor="language-code"
-              className="block text-sm font-medium text-muted-foreground"
-            >
-              Language Code (Optional)
-            </label>
-            <input
-              id="language-code"
-              aria-label="Optional language code for ElevenLabs synthesis"
-              type="text"
-              value={languageCode}
-              onChange={(event) => setLanguageCode(event.target.value)}
-              placeholder="en"
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-            />
-
-            <label htmlFor="seed-input" className="block text-sm font-medium text-muted-foreground">
-              Seed (Optional, integer)
-            </label>
-            <input
-              id="seed-input"
-              aria-label="Optional deterministic seed for ElevenLabs synthesis"
-              type="number"
-              value={seedInput}
-              onChange={(event) => setSeedInput(event.target.value)}
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-            />
-
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                <input
-                  aria-label="Enable speaker boost for ElevenLabs voice"
-                  type="checkbox"
-                  checked={useSpeakerBoost}
-                  onChange={(event) => setUseSpeakerBoost(event.target.checked)}
-                  className="h-4 w-4 rounded border border-input bg-background accent-[var(--accent)] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-                />
-                Speaker Boost
-              </label>
-              <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                <input
-                  aria-label="Enable ElevenLabs request logging"
-                  type="checkbox"
-                  checked={enableLogging}
-                  onChange={(event) => setEnableLogging(event.target.checked)}
-                  className="h-4 w-4 rounded border border-input bg-background accent-[var(--accent)] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-                />
-                API Logging
-              </label>
-              <label className="flex items-center gap-2 text-sm text-muted-foreground sm:col-span-2">
-                <input
-                  aria-label="Use ElevenLabs streaming endpoint for preview"
-                  type="checkbox"
-                  checked={streamPreview}
-                  onChange={(event) => setStreamPreview(event.target.checked)}
-                  className="h-4 w-4 rounded border border-input bg-background accent-[var(--accent)] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-                />
-                Use Streaming Endpoint for Preview
-              </label>
-            </div>
-          </div>
-
           <label htmlFor="preview-text" className="block text-sm font-medium text-muted-foreground">
             Preview Text
           </label>
@@ -885,154 +493,6 @@ export function VoiceStudioPage() {
             </Button>
           </div>
 
-          <div className="space-y-4 border-t border-border pt-6">
-            <h3 className="text-base font-semibold text-foreground">Accessibility Audio Tools</h3>
-            <p className="text-xs text-muted-foreground">
-              Run speech-to-speech, voice changer, sound effects, and dubbing from this panel.
-            </p>
-
-            <label
-              htmlFor="transform-audio-file"
-              className="block text-sm font-medium text-muted-foreground"
-            >
-              Source Audio File (for speech-to-speech / voice changer)
-            </label>
-            <input
-              id="transform-audio-file"
-              aria-label="Upload source audio for speech-to-speech or voice changer"
-              type="file"
-              accept="audio/*"
-              onChange={(event) => setTransformFile(event.target.files?.[0] ?? null)}
-              className="w-full cursor-pointer rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-foreground file:px-3 file:py-1 file:text-sm file:font-semibold file:text-background hover:file:opacity-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-            />
-
-            <label htmlFor="sts-model-id" className="block text-sm font-medium text-muted-foreground">
-              Speech/Voice-Changer Model
-            </label>
-            <input
-              id="sts-model-id"
-              aria-label="ElevenLabs speech-to-speech model id"
-              type="text"
-              value={stsModelId}
-              onChange={(event) => setStsModelId(event.target.value)}
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-            />
-
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <Button
-                aria-label="Run ElevenLabs speech to speech conversion"
-                onClick={() => runTransformTool('s2s')}
-                disabled={toolBusy !== 'none'}
-                variant="outline"
-                className="h-10"
-              >
-                {toolBusy === 's2s' ? 'Converting...' : 'Speech-to-Speech'}
-              </Button>
-              <Button
-                aria-label="Run ElevenLabs voice changer conversion"
-                onClick={() => runTransformTool('changer')}
-                disabled={toolBusy !== 'none'}
-                variant="outline"
-                className="h-10"
-              >
-                {toolBusy === 'changer' ? 'Converting...' : 'Voice Changer'}
-              </Button>
-            </div>
-
-            <label
-              htmlFor="sound-effect-text"
-              className="block text-sm font-medium text-muted-foreground"
-            >
-              Sound Effect Prompt
-            </label>
-            <input
-              id="sound-effect-text"
-              aria-label="Prompt for ElevenLabs sound effects generation"
-              type="text"
-              value={effectText}
-              onChange={(event) => setEffectText(event.target.value)}
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-            />
-            <Button
-              aria-label="Generate sound effect"
-              onClick={runSoundEffects}
-              disabled={toolBusy !== 'none'}
-              variant="outline"
-              className="h-10"
-            >
-              {toolBusy === 'sfx' ? 'Generating...' : 'Generate Sound Effect'}
-            </Button>
-
-            <label
-              htmlFor="dubbing-source-url"
-              className="block text-sm font-medium text-muted-foreground"
-            >
-              Dubbing Source URL
-            </label>
-            <input
-              id="dubbing-source-url"
-              aria-label="Source media URL for ElevenLabs dubbing"
-              type="url"
-              value={dubbingSourceUrl}
-              onChange={(event) => setDubbingSourceUrl(event.target.value)}
-              placeholder="https://example.com/video.mp4"
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-            />
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <div>
-                <label
-                  htmlFor="dubbing-target-lang"
-                  className="block text-sm font-medium text-muted-foreground"
-                >
-                  Target Language
-                </label>
-                <input
-                  id="dubbing-target-lang"
-                  aria-label="Target language code for dubbing"
-                  type="text"
-                  value={dubbingTargetLang}
-                  onChange={(event) => setDubbingTargetLang(event.target.value)}
-                  placeholder="en"
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="dubbing-source-lang"
-                  className="block text-sm font-medium text-muted-foreground"
-                >
-                  Source Language (Optional)
-                </label>
-                <input
-                  id="dubbing-source-lang"
-                  aria-label="Source language code for dubbing"
-                  type="text"
-                  value={dubbingSourceLang}
-                  onChange={(event) => setDubbingSourceLang(event.target.value)}
-                  placeholder="auto"
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-                />
-              </div>
-            </div>
-            <Button
-              aria-label="Create ElevenLabs dubbing job"
-              onClick={runDubbing}
-              disabled={toolBusy !== 'none'}
-              variant="outline"
-              className="h-10"
-            >
-              {toolBusy === 'dubbing' ? 'Submitting...' : 'Start Dubbing'}
-            </Button>
-
-            {lastDubbingResult && (
-              <pre
-                aria-label="Latest dubbing response payload"
-                className="max-h-40 overflow-auto rounded-lg border border-border bg-background p-3 text-xs text-foreground"
-              >
-                {JSON.stringify(lastDubbingResult, null, 2)}
-              </pre>
-            )}
-          </div>
         </section>
 
         <section className="space-y-6 rounded-xl border border-border bg-card p-6 shadow-sm">

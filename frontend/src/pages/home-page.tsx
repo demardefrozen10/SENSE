@@ -19,14 +19,6 @@ function apiBaseUrl() {
   if (envBase) return envBase.replace(/\/+$/, '')
   const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
   const host = window.location.hostname || '127.0.0.1'
-  return `${protocol}//${host}:8000`
-}
-
-function apiBaseUrl() {
-  const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
-  if (envBase) return envBase.replace(/\/+$/, '')
-  const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
-  const host = window.location.hostname || '127.0.0.1'
   return `${protocol}//${host}:8010`
 }
 
@@ -37,7 +29,6 @@ export function HomePage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
-  const apiBase = apiBaseUrl()
   const modalRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const firstInputRef = useRef<HTMLInputElement>(null)

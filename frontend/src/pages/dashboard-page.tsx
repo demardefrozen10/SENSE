@@ -23,10 +23,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 type LogEntry = { id: number; time: string; text: string }
 type VoiceProvider = 'gemini' | 'elevenlabs'
+type VoiceProfile = {
+  voice_id: string
+  stability: number
+  clarity: number
+  style_exaggeration: number
+  playback_speed: number
+}
 
 const MAX_LOG = 120
 const USE_PI_CAMERA = true
 const FRAME_INTERVAL_MS = 500
+const PROACTIVE_PROMPT_INTERVAL_MS = 4000
 const MIC_BUFFER_SIZE = 1024
 const GEMINI_MODEL =
   (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() || 'gemini-2.5-flash-native-audio-latest'
@@ -168,7 +176,6 @@ registerProcessor('pcm-input-processor', PCMInputProcessor);
 export function DashboardPage() {
   const navigate = useNavigate()
   const username = localStorage.getItem('username') || 'User'
-  const token = localStorage.getItem('token') || ''
 
   const [geminiConnected, setGeminiConnected] = useState(false)
   const [piConnected, setPiConnected] = useState(false)
@@ -179,7 +186,7 @@ export function DashboardPage() {
   const [eventLog, setEventLog] = useState<LogEntry[]>([])
   const [sessionActive, setSessionActive] = useState(false)
   const [voiceProvider, setVoiceProvider] = useState<VoiceProvider>('elevenlabs')
-  const [voiceCustomizationEnabled, setVoiceCustomizationEnabled] = useState(true)
+  const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
   const piImageRef = useRef<HTMLImageElement>(null)
@@ -193,13 +200,20 @@ export function DashboardPage() {
   const mountedRef = useRef(false)
   const viewerReconnectTimerRef = useRef<number | null>(null)
   const geminiReconnectTimerRef = useRef<number | null>(null)
+  const viewerReconnectAttemptsRef = useRef(0)
+  const geminiReconnectAttemptsRef = useRef(0)
   const intentionalGeminiCloseRef = useRef(false)
   const geminiConnectedRef = useRef(false)
   const geminiConnectingRef = useRef(false)
-          const mp3AudioRef = useRef<HTMLAudioElement | null>(null)
-  const mp3AudioUrlRef = useRef<string | null>(null)
-  const shouldReconnectRef = useRef(true)
-  const reconnectTimerRef = useRef<number | null>(null)
+  const voiceProfileRef = useRef<VoiceProfile | null>(null)
+  const voiceProviderRef = useRef<VoiceProvider>('elevenlabs')
+  const pendingTurnTextRef = useRef('')
+  const elevenLabsPendingChunkRef = useRef('')
+  const lastOutputTranscriptionRef = useRef('')
+  const elevenLabsQueueRef = useRef<string[]>([])
+  const elevenLabsSpeakingRef = useRef(false)
+  const elevenLabsAudioRef = useRef<HTMLAudioElement | null>(null)
+  const elevenLabsAudioUrlRef = useRef<string | null>(null)
 
   const apiBase = useMemo(apiBaseUrl, [])
   const backendWsUrl = `${apiBase.replace(/^http/i, 'ws')}/ws/live?role=viewer`
@@ -210,6 +224,104 @@ export function DashboardPage() {
       return [entry, ...prev].slice(0, MAX_LOG)
     })
   }, [])
+
+  useEffect(() => {
+    voiceProviderRef.current = voiceProvider
+  }, [voiceProvider])
+
+  useEffect(() => {
+    voiceProfileRef.current = voiceProfile
+  }, [voiceProfile])
+
+  const loadVoiceProfile = useCallback(async () => {
+    const token = localStorage.getItem('token')
+    if (!token) return
+    try {
+      const response = await fetch(`${apiBase}/voice-studio/profile`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!response.ok) {
+        throw new Error(`profile status ${response.status}`)
+      }
+      const payload = (await response.json()) as VoiceProfile
+      setVoiceProfile(payload)
+    } catch (err) {
+      addLog(`Voice profile unavailable: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, [addLog, apiBase])
+
+  const drainElevenLabsQueue = useCallback(async () => {
+    if (elevenLabsSpeakingRef.current) return
+    const next = elevenLabsQueueRef.current.shift()
+    if (!next) return
+    const profile = voiceProfileRef.current
+    if (!profile) return
+
+    const token = localStorage.getItem('token')
+    if (!token) return
+
+    elevenLabsSpeakingRef.current = true
+    try {
+      const response = await fetch(`${apiBase}/voice-studio/preview`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          voice_id: profile.voice_id,
+          stability: profile.stability,
+          clarity: profile.clarity,
+          style_exaggeration: profile.style_exaggeration,
+          playback_speed: profile.playback_speed,
+          text: next,
+        }),
+      })
+      if (!response.ok) {
+        throw new Error(`status ${response.status}`)
+      }
+      const blob = await response.blob()
+      if (elevenLabsAudioUrlRef.current) {
+        URL.revokeObjectURL(elevenLabsAudioUrlRef.current)
+      }
+      const audioUrl = URL.createObjectURL(blob)
+      elevenLabsAudioUrlRef.current = audioUrl
+      const audio = new Audio(audioUrl)
+      elevenLabsAudioRef.current = audio
+      await audio.play()
+      await new Promise<void>((resolve) => {
+        audio.onended = () => resolve()
+        audio.onerror = () => resolve()
+      })
+    } catch (err) {
+      addLog(`ElevenLabs playback failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      elevenLabsSpeakingRef.current = false
+      if (elevenLabsQueueRef.current.length > 0) {
+        void drainElevenLabsQueue()
+      }
+    }
+  }, [addLog, apiBase])
+
+  const queueElevenLabsText = useCallback((raw: string) => {
+    const text = raw.replace(/\s+/g, ' ').trim()
+    if (!text) return
+    elevenLabsQueueRef.current.push(text)
+  }, [])
+
+  const flushElevenLabsPendingChunk = useCallback(
+    (force = false) => {
+      const chunk = elevenLabsPendingChunkRef.current.trim()
+      if (!chunk) return
+      const hasBoundary = /[.!?]\s*$/.test(chunk)
+      const longEnough = chunk.length >= 32
+      if (!force && !hasBoundary && !longEnough) return
+      queueElevenLabsText(chunk)
+      elevenLabsPendingChunkRef.current = ''
+      void drainElevenLabsQueue()
+    },
+    [drainElevenLabsQueue, queueElevenLabsText],
+  )
 
   const safeSendRealtimeInput = useCallback(
     (payload: Parameters<Session['sendRealtimeInput']>[0]) => {
@@ -242,13 +354,20 @@ export function DashboardPage() {
   const handleLiveMessage = useCallback(
     (msg: LiveServerMessage) => {
       if (msg.data) {
-        if (!playerRef.current) playerRef.current = createPcmPlayer(24000)
-        playerRef.current.feed(msg.data)
+        if (voiceProviderRef.current === 'gemini') {
+          if (!playerRef.current) playerRef.current = createPcmPlayer(24000)
+          playerRef.current.feed(msg.data)
+        }
       }
 
       if (msg.text) {
         setTranscript((p) => p + msg.text)
         addLog(`Gemini: ${msg.text}`)
+        pendingTurnTextRef.current += msg.text
+        if (voiceProviderRef.current === 'elevenlabs') {
+          elevenLabsPendingChunkRef.current += msg.text
+          flushElevenLabsPendingChunk(false)
+        }
       }
 
       if (msg.serverContent?.inputTranscription?.text && msg.serverContent.inputTranscription.finished) {
@@ -256,23 +375,49 @@ export function DashboardPage() {
       }
 
       if (
-        msg.serverContent?.outputTranscription?.text &&
-        msg.serverContent.outputTranscription.finished &&
-        !msg.text
+        msg.serverContent?.outputTranscription?.text
       ) {
-        setTranscript((p) => p + msg.serverContent!.outputTranscription!.text!)
+        const transcribed = msg.serverContent.outputTranscription.text
+        if (!msg.text && transcribed) {
+          setTranscript((p) => p + transcribed)
+        }
+        if (voiceProviderRef.current === 'elevenlabs' && transcribed) {
+          const previous = lastOutputTranscriptionRef.current
+          const delta = transcribed.startsWith(previous) ? transcribed.slice(previous.length) : transcribed
+          if (delta.trim()) {
+            pendingTurnTextRef.current += delta
+            elevenLabsPendingChunkRef.current += delta
+            flushElevenLabsPendingChunk(false)
+          }
+          lastOutputTranscriptionRef.current = transcribed
+        }
       }
 
       if (msg.serverContent?.interrupted) {
         playerRef.current?.clear()
+        pendingTurnTextRef.current = ''
+        if (elevenLabsAudioRef.current) {
+          elevenLabsAudioRef.current.pause()
+          elevenLabsAudioRef.current.currentTime = 0
+        }
         addLog('Gemini interrupted')
       }
 
       if (msg.serverContent?.turnComplete) {
+        if (voiceProviderRef.current === 'elevenlabs') {
+          flushElevenLabsPendingChunk(true)
+          const text = pendingTurnTextRef.current.trim()
+          if (!text && elevenLabsQueueRef.current.length === 0 && !elevenLabsSpeakingRef.current) {
+            addLog('ElevenLabs mode: no text available for TTS in this turn.')
+          }
+        }
+        pendingTurnTextRef.current = ''
+        elevenLabsPendingChunkRef.current = ''
+        lastOutputTranscriptionRef.current = ''
         setTranscript((p) => (p ? `${p}\n` : p))
       }
     },
-    [addLog],
+    [addLog, flushElevenLabsPendingChunk],
   )
 
   const connectGemini = useCallback(async () => {
@@ -290,13 +435,14 @@ export function DashboardPage() {
         config: {
           responseModalities: [Modality.AUDIO],
           systemInstruction:
-            'You are SENSE, a real-time accessibility assistant for safe mobility. Continuously monitor the live camera feed and proactively speak short alerts when a nearby obstacle, hazard, doorway, step, curb, vehicle, person, or sudden scene change could affect user safety, even if the user says nothing first. Prioritize immediate safety guidance with direction and distance cues when possible (for example: left/right/center, very close/close/far). Keep proactive alerts brief, calm, and non-repetitive; only repeat if risk changes or becomes urgent. If the user asks any question, switch to normal conversational mode and answer clearly and directly while still maintaining safety awareness from the video context.',
+            "You are Echo-Sight, a real-time accessibility assistant for visually impaired users. You receive a live webcam video feed. Proactively describe what you see without waiting for the user to ask. Describe obstacles, hazards, objects, and surroundings in short, clear sentences (max 15 words). Use clock-position directions (e.g. 'Chair at 2 o\\'clock, 3 feet away'). Prioritize safety-critical objects first, then notable items. For example, if you see a bag of chips, say 'I see chips'. Speak naturally and calmly.",
           inputAudioTranscription: {},
           outputAudioTranscription: {},
         },
         callbacks: {
           onopen: () => {
             if (!mountedRef.current) return
+            geminiReconnectAttemptsRef.current = 0
             geminiConnectedRef.current = true
             setGeminiConnected(true)
             setSessionActive(true)
@@ -323,18 +469,25 @@ export function DashboardPage() {
             setSessionActive(false)
             addLog('Gemini Live disconnected')
             if (!intentionalGeminiCloseRef.current) {
-              if (e.code === 1008) {
+              if (e.code === 1008 || e.code === 1002 || e.code === 1003 || e.code === 1007 || e.code === 1009) {
                 addLog(`Gemini rejected session: ${e.reason || 'model/policy error'}`)
+                return
+              }
+              if (geminiReconnectAttemptsRef.current >= 5) {
+                addLog('Gemini reconnect limit reached. Refresh page after fixing config/network.')
                 return
               }
               if (geminiReconnectTimerRef.current !== null) {
                 clearTimeout(geminiReconnectTimerRef.current)
               }
+              const attempt = geminiReconnectAttemptsRef.current
+              const delayMs = Math.min(15000, 1200 * 2 ** attempt)
+              geminiReconnectAttemptsRef.current += 1
               geminiReconnectTimerRef.current = window.setTimeout(() => {
                 if (mountedRef.current && !sessionRef.current && !geminiConnectingRef.current) {
                   void connectGemini()
                 }
-              }, 1200)
+              }, delayMs)
             }
           },
         },
@@ -358,6 +511,7 @@ export function DashboardPage() {
     wsRef.current = socket
 
     socket.onopen = () => {
+      viewerReconnectAttemptsRef.current = 0
       setPiConnected(true)
       addLog('Connected to backend relay')
     }
@@ -401,10 +555,17 @@ export function DashboardPage() {
       addLog('Backend relay disconnected')
       wsRef.current = null
       if (!mountedRef.current) return
+      if (viewerReconnectAttemptsRef.current >= 10) {
+        addLog('Backend relay reconnect limit reached. Check backend URL/port and refresh page.')
+        return
+      }
       if (viewerReconnectTimerRef.current !== null) {
         clearTimeout(viewerReconnectTimerRef.current)
       }
-      viewerReconnectTimerRef.current = window.setTimeout(connectBackendViewer, 1500)
+      const attempt = viewerReconnectAttemptsRef.current
+      const delayMs = Math.min(15000, 1000 * 2 ** attempt)
+      viewerReconnectAttemptsRef.current += 1
+      viewerReconnectTimerRef.current = window.setTimeout(connectBackendViewer, delayMs)
     }
 
     socket.onerror = () => {
@@ -435,6 +596,7 @@ export function DashboardPage() {
 
     connectBackendViewer()
     void connectGemini()
+    void loadVoiceProfile()
 
     return () => {
       mountedRef.current = false
@@ -446,13 +608,20 @@ export function DashboardPage() {
         clearTimeout(geminiReconnectTimerRef.current)
         geminiReconnectTimerRef.current = null
       }
+      if (elevenLabsAudioRef.current) {
+        elevenLabsAudioRef.current.pause()
+      }
+      if (elevenLabsAudioUrlRef.current) {
+        URL.revokeObjectURL(elevenLabsAudioUrlRef.current)
+        elevenLabsAudioUrlRef.current = null
+      }
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.close()
       }
       wsRef.current = null
       disconnectGemini()
     }
-  }, [connectBackendViewer, connectGemini, disconnectGemini, navigate])
+  }, [connectBackendViewer, connectGemini, disconnectGemini, loadVoiceProfile, navigate])
 
   useEffect(() => {
     if (!cameraOn) return
@@ -470,6 +639,20 @@ export function DashboardPage() {
 
     return () => clearInterval(timer)
   }, [cameraOn, safeSendRealtimeInput])
+
+  useEffect(() => {
+    if (!cameraOn) return
+    if (!geminiConnected) return
+
+    const timer = window.setInterval(() => {
+      if (!latestPiFrameRef.current) return
+      safeSendRealtimeInput({
+        text: 'Give one short proactive mobility safety update for this view. Warn early if needed.',
+      })
+    }, PROACTIVE_PROMPT_INTERVAL_MS)
+
+    return () => clearInterval(timer)
+  }, [cameraOn, geminiConnected, safeSendRealtimeInput])
 
   const startCamera = useCallback(() => {
     if (!USE_PI_CAMERA) return
@@ -561,9 +744,13 @@ export function DashboardPage() {
   }
 
   const handleSendText = (text: string) => {
-    if (!sessionRef.current) return
-    sessionRef.current.sendClientContent({ turns: text, turnComplete: true })
-    addLog(`You: ${text}`)
+    if (!text) return
+    const sent = safeSendRealtimeInput({ text })
+    if (sent) {
+      addLog(`You: ${text}`)
+    } else {
+      addLog('Unable to send text: Gemini session is disconnected')
+    }
   }
 
   return (
@@ -596,9 +783,13 @@ export function DashboardPage() {
               variant="outline"
               size="sm"
               className="border-border bg-background hover:bg-card"
-              onClick={() =>
-                setVoiceProvider((current) => (current === 'gemini' ? 'elevenlabs' : 'gemini'))
-              }
+              onClick={async () => {
+                const next = voiceProvider === 'gemini' ? 'elevenlabs' : 'gemini'
+                setVoiceProvider(next)
+                if (next === 'elevenlabs' && !voiceProfile) {
+                  await loadVoiceProfile()
+                }
+              }}
             >
               <Volume2 className="mr-2 h-4 w-4" />
               Voice: {voiceProvider === 'elevenlabs' ? 'ElevenLabs' : 'Gemini'}

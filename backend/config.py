@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Always load backend/.env regardless of current working directory.
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 
 def _as_int(name: str, default: int) -> int:
