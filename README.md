@@ -1,4 +1,4 @@
-# 🧠 S.E.N.S.E - Spatial Environment Navigation & Safety Engine
+# S.E.N.S.E - Spatial Environment Navigation & Safety Engine
 
 > **CTRL+HACK+DEL 2.0 Hackathon Project**
 > A real-time AI-powered wearable that helps visually impaired users navigate the world using spatial audio, haptic feedback, and computer vision.
